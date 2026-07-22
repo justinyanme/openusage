@@ -26,6 +26,22 @@ providers.
   when a refresh failed; a matched provider with no data yet simply has no entry).
 - **404 Not Found** — the ID names no known provider and no family.
 
+### `GET /v1/spend`
+
+Returns `openusage.spend.v1` for all enabled providers that have both a declared history resource and
+an authoritative local history snapshot. It is byte-for-byte the same serialization used by
+`openusage spend` for the same state. The response has exactly 30 local-calendar buckets ending today;
+missing measurements are `null`, while measured zeroes remain non-null zero totals.
+
+### `GET /v1/spend/:id`
+
+Returns the same envelope for an exact card or every card in a provider family, including disabled
+cards, using the same matching rules as `/v1/limits/:id`. A known provider without an authoritative
+history is omitted; its current refresh failure, when present, remains in `errors`.
+
+- **200 OK** — spend envelope, which may have an empty `providers` object.
+- **404 Not Found** — the ID names no known provider and no family.
+
 ### `GET /v1/usage`
 
 Returns the legacy UI-oriented snapshots for all **enabled** providers, in your dashboard order. Existing
@@ -116,6 +132,74 @@ For bounded progress resources, `unit` follows the provider's live metric format
 
 Charts, colors, subtitles, formatted badges, layout state, and historical spend periods stay out of this
 contract. Codex's combined Credits UI row becomes two scalar resources: `credits` and `creditValue`.
+
+## Spend response shape
+
+```jsonc
+{
+  "schema": "openusage.spend.v1",
+  "generatedAt": "2026-07-22T03:10:00.000Z",
+  "calendarTimeZone": "Asia/Singapore",
+  "window": { "startDate": "2026-06-23", "endDate": "2026-07-22", "dayCount": 30 },
+  "providers": {
+    "claude": {
+      "displayName": "Claude",
+      "fetchedAt": "2026-07-22T03:09:30.000Z",
+      "expiresAt": "2026-07-22T03:14:30.000Z",
+      "stale": false,
+      "historyScope": "machineLocal",
+      "sourceNote": "From local Claude logs",
+      "cost": { "currency": "USD", "provenance": "estimated" },
+      "periods": {
+        "today": {
+          "total": { "tokens": 8200, "costUSD": 0.14375 },
+          "observedDays": 1,
+          "expectedDays": 1,
+          "totalsComplete": true,
+          "excludedModels": []
+        },
+        "yesterday": {
+          "total": null,
+          "observedDays": 0,
+          "expectedDays": 1,
+          "totalsComplete": null,
+          "excludedModels": []
+        },
+        "last30Days": {
+          "total": { "tokens": 8200, "costUSD": 0.14375 },
+          "observedDays": 1,
+          "expectedDays": 30,
+          "totalsComplete": true,
+          "excludedModels": []
+        }
+      },
+      "days": [
+        {
+          "date": "2026-06-23",
+          "total": null,
+          "models": null,
+          "totalsComplete": null,
+          "excludedModels": []
+        }
+      ]
+    }
+  },
+  "errors": []
+}
+```
+
+`days` is dense and ordered oldest-to-newest. `total: null` means no measurement; an object containing
+zero means measured zero. Tokens can remain known while `costUSD` is null. `models` is null when the
+source has no model breakdown and otherwise contains every normalized model in deterministic order,
+with optional grouped `variants`. `excludedModels` names unpriced models omitted from coherent totals;
+`totalsComplete` is false when exclusions exist, true for an observed total without exclusions, and
+null when neither exists. Periods are derived only from canonical days and expose observed versus
+expected coverage. Cost precision is not rounded. V1 currency is USD, with `estimated` or `reported`
+provenance and `machineLocal` or `accountWide` scope.
+
+Spend serialization deliberately reads each machine's local `ProviderSnapshot.usageHistory`, not the
+dashboard's optional iCloud-combined presentation. This keeps HTTP and the one-shot CLI identical when
+the app UI is closed and prevents account-wide sources from being counted twice.
 
 ## Legacy usage response shape
 

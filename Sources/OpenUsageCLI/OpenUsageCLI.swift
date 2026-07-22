@@ -23,7 +23,8 @@ struct OpenUsageCLI {
             }
             let result = try await UsageReader(userDefaults: defaults).read(
                 providerID: arguments.providerID,
-                force: arguments.force
+                force: arguments.force,
+                output: arguments.command == .spend ? .spend : .limits
             )
             FileHandle.standardOutput.write(result.data)
             FileHandle.standardOutput.write(Data("\n".utf8))
@@ -53,8 +54,10 @@ struct OpenUsageCLI {
 
     private static let help = """
     Usage: openusage [provider] [--force]
+           openusage spend [provider] [--force]
 
-    Read limits through OpenUsage's shared five-minute cache and exit. Output is always JSON.
+    Read limits, or explicit spend history, through OpenUsage's shared five-minute cache and exit.
+    Output is always JSON; the default command remains the limits helper.
 
     Options:
       --force      Refresh even when the shared cache is still fresh

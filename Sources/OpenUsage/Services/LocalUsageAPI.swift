@@ -16,8 +16,13 @@ enum LocalUsageAPI {
         /// The rendered snapshot set shared by both routes. `/v1/usage` and `/v1/limits` only differ
         /// in how they project this data onto their legacy and normalized wire formats.
         var snapshots: [String: ProviderSnapshot]
+        /// Last-good snapshots produced on this Mac. Spend serialization deliberately excludes the
+        /// dashboard's optional iCloud peer union so HTTP and one-shot CLI remain identical.
+        var localSnapshots: [String: ProviderSnapshot] = [:]
         /// Only descriptors explicitly opted into the stable limits contract.
         var limitDescriptors: [String: [WidgetDescriptor]] = [:]
+        /// Per-provider provenance and scope for normalized spend-history exports.
+        var historyDescriptors: [String: UsageHistoryDescriptor] = [:]
         var errors: [String: String] = [:]
         var generatedAt = Date()
 
@@ -42,6 +47,12 @@ enum LocalUsageAPI {
                 snapshot.displayName = title
                 return snapshot
             }
+            state.localSnapshots = localSnapshots.mapValues { snapshot in
+                guard let title = titles[snapshot.providerID] else { return snapshot }
+                var snapshot = snapshot
+                snapshot.displayName = title
+                return snapshot
+            }
             return state
         }
     }
@@ -51,7 +62,12 @@ enum LocalUsageAPI {
         var body: Data?
     }
 
-    static func respond(method: String, path: String, state: State) -> Response {
+    static func respond(
+        method: String,
+        path: String,
+        state: State,
+        calendar: Calendar = .current
+    ) -> Response {
         // Preflight support: OPTIONS anywhere is 204 + the CORS headers the server always sends.
         if method == "OPTIONS" {
             return Response(status: 204, body: nil)
@@ -62,6 +78,30 @@ enum LocalUsageAPI {
             .map(String.init)
 
         switch (segments.count, segments.first, segments.dropFirst().first) {
+        case (2, "v1", "spend"):
+            guard method == "GET" else { return error(405, "method_not_allowed") }
+            return Response(
+                status: 200,
+                body: LocalSpendAPI.encode(
+                    providerIDs: state.enabledOrderedIDs,
+                    state: state,
+                    calendar: calendar
+                )
+            )
+
+        case (3, "v1", "spend"):
+            guard method == "GET" else { return error(405, "method_not_allowed") }
+            let providerIDs = state.matchingCardIDs(for: segments[2])
+            guard !providerIDs.isEmpty else { return error(404, "provider_not_found") }
+            return Response(
+                status: 200,
+                body: LocalSpendAPI.encode(
+                    providerIDs: providerIDs,
+                    state: state,
+                    calendar: calendar
+                )
+            )
+
         case (2, "v1", "limits"):
             guard method == "GET" else { return error(405, "method_not_allowed") }
             return Response(

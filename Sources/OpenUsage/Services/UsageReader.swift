@@ -5,6 +5,11 @@ public struct UsageReadResult: Sendable {
     public let warnings: [String]
 }
 
+public enum UsageReadOutput: Sendable {
+    case limits
+    case spend
+}
+
 public enum UsageReaderError: LocalizedError, Sendable {
     case unknownProvider(String)
     case refreshFailed(String)
@@ -36,7 +41,11 @@ public struct UsageReader {
         self.providersOverride = providers
     }
 
-    public func read(providerID requestedProviderID: String? = nil, force: Bool = false) async throws -> UsageReadResult {
+    public func read(
+        providerID requestedProviderID: String? = nil,
+        force: Bool = false,
+        output: UsageReadOutput = .limits
+    ) async throws -> UsageReadResult {
         // The launch account pass (see `ProviderAccountAssembly`): resolves each family's default
         // account so cached snapshots are guarded — and refreshed ones stamped — with the correct
         // account, and finds the extra Claude cards the catalog must build (the CLI must know the
@@ -100,6 +109,7 @@ public struct UsageReader {
             cache.snapshot(providerID: $0) == nil || staleAccountStampIDs.contains($0)
         }
         var snapshots = cachedSnapshots
+        var localSnapshots = cachedSnapshots
         var warnings: [String] = []
         var errors: [String: String] = [:]
 
@@ -126,6 +136,7 @@ public struct UsageReader {
                 await PersistentJSONLScanCaches.flushPendingWrites()
             }
             snapshots = dataStore.snapshots
+            localSnapshots = dataStore.localSnapshots
             errors = dataStore.providerErrors
             warnings = orderedIDs
                 .compactMap { id in errors[id].map { "\(id): \($0)" } }
@@ -139,11 +150,17 @@ public struct UsageReader {
             enabledOrderedIDs: enabledOrderedIDs,
             knownIDs: knownIDs,
             snapshots: snapshots,
+            localSnapshots: localSnapshots,
             limitDescriptors: registry.limitDescriptorsByProvider,
+            historyDescriptors: registry.historyDescriptorsByProvider,
             errors: errors
         )
         .resolvingDisplayNames(accountTitles)
-        let path = requestedToken.map { "/v1/limits/\($0)" } ?? "/v1/limits"
+        let route = switch output {
+        case .limits: "limits"
+        case .spend: "spend"
+        }
+        let path = requestedToken.map { "/v1/\(route)/\($0)" } ?? "/v1/\(route)"
         let response = LocalUsageAPI.respond(method: "GET", path: path, state: state)
         guard let data = response.body else {
             // Unreachable in practice: the token was validated above and the limits routes always
