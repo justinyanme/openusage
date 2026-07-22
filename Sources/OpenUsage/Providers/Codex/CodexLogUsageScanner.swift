@@ -100,7 +100,7 @@ actor CodexLogUsageScanner {
 
     /// Scan the last `daysBack` days of rollouts in every Codex home.
     func scan(
-        daysBack: Int = 30, now: Date = Date(), pricing: ModelPricing, fallbackModel: String? = nil
+        daysBack: Int = UsageHistoryWindow.previousDays, now: Date = Date(), pricing: ModelPricing, fallbackModel: String? = nil
     ) async -> LogUsageScan? {
         await scan(homes: allHomes(), daysBack: daysBack, now: now, pricing: pricing, fallbackModel: fallbackModel)
     }

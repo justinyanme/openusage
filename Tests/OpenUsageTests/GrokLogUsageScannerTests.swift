@@ -247,7 +247,6 @@ final class GrokLogUsageScannerTests: XCTestCase {
         let scanner = GrokLogFixture.scanner(home: home)
 
         let usage = await scanner.scan(
-            daysBack: 30,
             now: OpenUsageISO8601.date(from: "2026-06-18T12:00:00.000Z")!,
             pricing: TestPricing.bundled
         )

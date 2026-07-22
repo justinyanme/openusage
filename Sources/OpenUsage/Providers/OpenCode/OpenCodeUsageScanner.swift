@@ -45,7 +45,7 @@ struct OpenCodeUsageScanner: Sendable {
     /// Scan the last `daysBack` days. Returns `nil` only when there is no OpenCode database at all;
     /// a present-but-empty database yields an empty scan (idle tiles collapse to "No data" via
     /// `SpendTileMapper`). Throws `databaseUnreadable` when databases exist but none could be read.
-    func scan(now: Date, daysBack: Int = 30) async throws -> OpenCodeUsageScan? {
+    func scan(now: Date, daysBack: Int = UsageHistoryWindow.previousDays) async throws -> OpenCodeUsageScan? {
         let paths: [String]
         do {
             paths = try databasePaths()
@@ -95,6 +95,8 @@ struct OpenCodeUsageScanner: Sendable {
             throw OpenCodeUsageError.databaseUnreadable
         }
 
+        // Combined hosted daily series (opencode-go + opencode) → the spend tiles + usage trend. Cost is
+        // authoritative, so every row is "priced": feed it straight into the shared accumulator.
         var accumulator = DailyUsageAccumulator()
         // OpenCode 2 copies legacy `message` rows into `session_message` under their original IDs and
         // keeps both tables, so the union can hold two copies of one message.
