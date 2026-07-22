@@ -7,7 +7,8 @@ final class UsageReaderTests: XCTestCase {
         let provider: Provider
         var widgetDescriptors: [WidgetDescriptor] {
             [WidgetDescriptor.percent(id: "\(provider.id).weekly", provider: provider, title: "Weekly")
-                .exportingLimit("weekly", unit: "percent")]
+                .exportingLimit("weekly", unit: "percent")
+                .exportingHistory(scope: .machineLocal, estimatedCost: true, sourceNote: "Test history")]
         }
         var refreshCount = 0
         var refreshError: String?
@@ -28,7 +29,14 @@ final class UsageReaderTests: XCTestCase {
                 providerID: provider.id,
                 displayName: provider.displayName,
                 lines: [.progress(label: "Weekly", used: 20, limit: 100, format: .percent)],
-                refreshedAt: refreshedAt
+                refreshedAt: refreshedAt,
+                usageHistory: ProviderUsageHistory(series: DailyUsageSeries(daily: [
+                    DailyUsageEntry(
+                        date: DailyUsageAccumulator.dayKey(from: refreshedAt),
+                        totalTokens: 123,
+                        costUSD: 0.45
+                    )
+                ]))
             )
         }
     }
@@ -125,5 +133,33 @@ final class UsageReaderTests: XCTestCase {
         XCTAssertEqual(result.warnings, ["stub: Not logged in"])
         XCTAssertEqual(errors.first?["providerId"] as? String, "stub")
         XCTAssertEqual(errors.first?["message"] as? String, "Not logged in")
+    }
+
+    func testSpendOutputUsesTheSameDiscoveryRefreshAndCachePath() async throws {
+        let defaults = defaults()
+        let provider = StubProvider()
+        provider.refreshedAt = Date()
+
+        let result = try await UsageReader(userDefaults: defaults, providers: [provider])
+            .read(providerID: "stub", force: true, output: .spend)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: result.data) as? [String: Any])
+        let providerJSON = try XCTUnwrap((root["providers"] as? [String: Any])?["stub"] as? [String: Any])
+        let days = try XCTUnwrap(providerJSON["days"] as? [[String: Any]])
+
+        XCTAssertEqual(root["schema"] as? String, "openusage.spend.v1")
+        XCTAssertEqual(days.count, 30)
+        XCTAssertEqual(provider.refreshCount, 1)
+        XCTAssertEqual(((days.last?["total"] as? [String: Any])?["tokens"] as? Int), 123)
+    }
+
+    func testDefaultOutputRemainsLimits() async throws {
+        let defaults = defaults()
+        let provider = StubProvider()
+
+        let result = try await UsageReader(userDefaults: defaults, providers: [provider])
+            .read(providerID: "stub", force: true)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: result.data) as? [String: Any])
+
+        XCTAssertEqual(root["schema"] as? String, "openusage.limits.v1")
     }
 }

@@ -1,14 +1,17 @@
 # Command-Line Interface
 
-OpenUsage ships a one-shot `openusage` command for agents and scripts. It prints the documented
-[`/v1/limits`](local-http-api.md#get-v1limits) JSON and exits; it never launches or leaves the menu-bar
-app running. The output contains stable scalar limits and balances, not UI rows, colors, subtitles,
-charts, or spend-history tiles.
+OpenUsage ships a one-shot `openusage` command for agents and scripts. The default command prints the
+documented [`/v1/limits`](local-http-api.md#get-v1limits) JSON; the explicit `spend` subcommand prints
+[`/v1/spend`](local-http-api.md#get-v1spend). Both exit after one read and never launch or leave the
+menu-bar app running.
 
 ```sh
 openusage                 # every enabled provider, refreshing stale cache entries
 openusage codex           # one provider, refreshing when its cache is stale
 openusage codex --force   # refresh through the shared provider engine, cache, print, exit
+openusage spend           # 30-day spend history for every enabled history-capable provider
+openusage spend claude    # spend history for every card in the Claude family
+openusage spend --force   # force refresh, then emit openusage.spend.v1
 ```
 
 The command and app import the same providers, authentication stores, pricing, refresh coordinator, and
@@ -29,5 +32,7 @@ In OpenUsage, open **Settings → Command Line** and click **Install…**. After
 administrator prompt, `openusage` is available globally in new terminal sessions. The installed symlink
 points to the signed helper inside OpenUsage, so in-place app updates also update the command.
 
-Exit codes are `0` for success, `2` for invalid arguments or an unknown provider, and `4` when a
-refresh or local read fails.
+Exit codes are `0` for complete success, `2` for invalid arguments or an unknown provider, and `4` for
+an operational warning or failed local read. Exit `4` may still carry a valid requested JSON schema on
+stdout; consumers should retain that usable last-good or partial data and inspect the envelope's
+provider-level `errors`. Options may appear before or after the optional provider token.
