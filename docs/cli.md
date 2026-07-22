@@ -19,6 +19,12 @@ snapshot cache. A normal read reuses snapshots less than five minutes old and re
 ones. `--force` is the CLI equivalent of the app's manual refresh: it bypasses that freshness gate and
 writes successful results to the same cache. Credentials are used locally and never appear in the output.
 
+When **Sync Across Macs** is on, `openusage spend` also reads the private iCloud history documents and
+applies the dashboard's account-aware merge before printing. It excludes this Mac's synced document and
+uses the current local snapshot instead, so the helper works with the menu-bar app closed without
+double-counting this machine. An iCloud read problem is reported as an exit-4 warning while valid local
+spend JSON remains available on stdout.
+
 A provider argument names providers by plain string matching, exactly like the
 [local HTTP API](local-http-api.md): an exact provider ID names that provider, and a family ID
 (`claude`, `codex`) names every account card of that family — with one account that's exactly the one

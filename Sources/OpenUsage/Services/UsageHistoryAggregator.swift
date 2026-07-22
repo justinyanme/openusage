@@ -160,6 +160,10 @@ enum UsageHistorySnapshotRenderer {
         combined: Bool = true
     ) -> ProviderSnapshot {
         var result = snapshot
+        // `snapshots` is the rendered source shared by the dashboard and public APIs. Keep the
+        // normalized history in step with the rebuilt rows; `localSnapshots` remains the isolated
+        // cache/iCloud-write source, so peer data can never echo back out from this assignment.
+        result.usageHistory = history
         result.lines.removeAll { historyLabels.contains($0.label) }
         let sourceNote = combined ? "Across your Macs · \(descriptor.sourceNote)" : descriptor.sourceNote
         SpendTileMapper.appendTokenUsage(

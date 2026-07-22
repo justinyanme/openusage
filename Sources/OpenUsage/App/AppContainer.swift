@@ -212,6 +212,7 @@ final class AppContainer {
                 localSnapshots: dataStore.localSnapshots,
                 limitDescriptors: registry.limitDescriptorsByProvider,
                 historyDescriptors: registry.historyDescriptorsByProvider,
+                syncedHistoryProviderIDs: dataStore.syncedHistoryProviderIDs,
                 errors: dataStore.providerErrors
             )
             // API output is human-read too: resolve card titles at respond time so renames show,

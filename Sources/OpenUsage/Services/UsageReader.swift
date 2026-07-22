@@ -30,15 +30,26 @@ public enum UsageReaderError: LocalizedError, Sendable {
 public struct UsageReader {
     private let defaults: UserDefaults
     private let providersOverride: [ProviderRuntime]?
+    private let historyFileStoreOverride: (any UsageHistoryFileStoring)?
+    private let iCloudContainerIdentifier: String?
 
-    public init(userDefaults: UserDefaults) {
+    public init(userDefaults: UserDefaults, iCloudContainerIdentifier: String? = nil) {
         self.defaults = userDefaults
         self.providersOverride = nil
+        self.historyFileStoreOverride = nil
+        self.iCloudContainerIdentifier = iCloudContainerIdentifier
     }
 
-    init(userDefaults: UserDefaults, providers: [ProviderRuntime]) {
+    init(
+        userDefaults: UserDefaults,
+        providers: [ProviderRuntime],
+        historyFileStore: (any UsageHistoryFileStoring)? = nil,
+        iCloudContainerIdentifier: String? = nil
+    ) {
         self.defaults = userDefaults
         self.providersOverride = providers
+        self.historyFileStoreOverride = historyFileStore
+        self.iCloudContainerIdentifier = iCloudContainerIdentifier
     }
 
     public func read(
@@ -112,10 +123,12 @@ public struct UsageReader {
         var localSnapshots = cachedSnapshots
         var warnings: [String] = []
         var errors: [String: String] = [:]
-
-        if needsRefresh {
-            LoginShellEnvironment.shared.prewarm()
-            let dataStore = WidgetDataStore(
+        let readsSyncedSpend = switch output {
+        case .limits: false
+        case .spend: defaults.bool(forKey: ICloudUsageSyncStore.enabledKey)
+        }
+        let dataStore: WidgetDataStore? = if needsRefresh || readsSyncedSpend {
+            WidgetDataStore(
                 registry: registry,
                 providers: providers,
                 cache: cache,
@@ -125,6 +138,15 @@ public struct UsageReader {
                 // stamp — an unstamped claude/codex entry would be discarded at the app's next launch.
                 providerIdentityKeys: accountAssembly.identityKeysByCard
             )
+        } else {
+            nil
+        }
+
+        if needsRefresh {
+            LoginShellEnvironment.shared.prewarm()
+            guard let dataStore else {
+                throw UsageReaderError.refreshFailed("local refresh store was unavailable")
+            }
             if let matchedIDs {
                 for providerID in orderedIDs.filter(matchedIDs.contains) {
                     _ = await dataStore.refresh(providerID: providerID, force: force)
@@ -142,6 +164,27 @@ public struct UsageReader {
                 .compactMap { id in errors[id].map { "\(id): \($0)" } }
         }
 
+        if readsSyncedSpend {
+            guard let dataStore else {
+                throw UsageReaderError.refreshFailed("iCloud spend store was unavailable")
+            }
+            if let ownDeviceID = ICloudUsageSyncStore.persistedDeviceID(defaults: defaults) {
+                do {
+                    let fileStore = historyFileStoreOverride
+                        ?? ICloudUsageHistoryFileStore(containerIdentifier: iCloudContainerIdentifier)
+                    let result = try await fileStore.loadDocuments()
+                    dataStore.setPeerHistoryDocuments(result.documents, ownDeviceID: ownDeviceID)
+                    snapshots = dataStore.snapshots
+                    localSnapshots = dataStore.localSnapshots
+                    warnings.append(contentsOf: result.invalidFileMessages.map { "iCloud sync: \($0)" })
+                } catch {
+                    warnings.append("iCloud sync: \(error.localizedDescription)")
+                }
+            } else {
+                warnings.append("iCloud sync: this Mac's sync identity is unavailable")
+            }
+        }
+
         // CLI output is human-read: resolve card titles against the persisted account registry so
         // renames show, matching the app's UI and HTTP API. Injected-provider tests use their own
         // defaults suite, so this is a no-op there.
@@ -153,6 +196,7 @@ public struct UsageReader {
             localSnapshots: localSnapshots,
             limitDescriptors: registry.limitDescriptorsByProvider,
             historyDescriptors: registry.historyDescriptorsByProvider,
+            syncedHistoryProviderIDs: dataStore?.syncedHistoryProviderIDs ?? [],
             errors: errors
         )
         .resolvingDisplayNames(accountTitles)

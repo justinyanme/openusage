@@ -92,6 +92,9 @@ final class WidgetDataStore {
     /// Wired by `ICloudUsageSyncStore`; debounced there so a concurrent provider batch produces one file.
     @ObservationIgnored var onLocalHistoryChanged: (@MainActor () -> Void)?
     @ObservationIgnored private var peerHistoryDocuments: [UsageHistoryDocument] = []
+    /// Local card IDs whose rendered normalized history includes at least one downloaded peer input.
+    /// Public spend serializers use this only as provenance; local cache/iCloud writes remain isolated.
+    private(set) var syncedHistoryProviderIDs: Set<String> = []
     /// Accounts synced from other Macs that have NO card here: surfaced in Total Spend only (their
     /// synthesized snapshots carry the usual Today/Yesterday/Last 30 Days lines), never as cards.
     private(set) var remoteOnlySpend: [(provider: Provider, snapshot: ProviderSnapshot)] = []
@@ -416,6 +419,7 @@ final class WidgetDataStore {
     private func rebuildRenderedSnapshots() {
         guard !peerHistoryDocuments.isEmpty else {
             snapshots = localSnapshots
+            syncedHistoryProviderIDs = []
             remoteOnlySpend = []
             return
         }
@@ -438,6 +442,7 @@ final class WidgetDataStore {
             descriptors: enabledDescriptors,
             now: renderDate
         )
+        syncedHistoryProviderIDs = Set(remapped.histories.map(\.cardID)).intersection(merged.keys)
         remoteOnlySpend = Self.renderRemoteOnlySpend(
             remapped.remoteOnly,
             registry: registry,

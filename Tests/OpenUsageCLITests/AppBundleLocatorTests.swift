@@ -12,7 +12,12 @@ final class AppBundleLocatorTests: XCTestCase {
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         let plist: [String: Any] = [
             "CFBundleIdentifier": "com.example.openusage",
-            "CFBundleShortVersionString": "1.2.3"
+            "CFBundleShortVersionString": "1.2.3",
+            "NSUbiquitousContainers": [
+                "iCloud.com.example.openusage": [
+                    "NSUbiquitousContainerName": "OpenUsage"
+                ]
+            ]
         ]
         let plistData = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
         try plistData.write(to: contents.appendingPathComponent("Info.plist"))
@@ -29,6 +34,7 @@ final class AppBundleLocatorTests: XCTestCase {
 
         XCTAssertEqual(located.bundleIdentifier, "com.example.openusage")
         XCTAssertEqual(located.version, "1.2.3")
+        XCTAssertEqual(located.iCloudContainerIdentifier, "iCloud.com.example.openusage")
     }
 
     func testEnvironmentCanSelectDefaultsSuiteForDevelopment() {
@@ -38,5 +44,6 @@ final class AppBundleLocatorTests: XCTestCase {
         )
 
         XCTAssertEqual(located.bundleIdentifier, "com.example.dev")
+        XCTAssertNil(located.iCloudContainerIdentifier)
     }
 }

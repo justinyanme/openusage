@@ -29,9 +29,10 @@ providers.
 ### `GET /v1/spend`
 
 Returns `openusage.spend.v1` for all enabled providers that have both a declared history resource and
-an authoritative local history snapshot. It is byte-for-byte the same serialization used by
-`openusage spend` for the same state. The response has exactly 30 local-calendar buckets ending today;
-missing measurements are `null`, while measured zeroes remain non-null zero totals.
+an authoritative normalized history snapshot. With iCloud Sync on, machine-local sources include the
+same account-matched peer history shown by the dashboard. It is byte-for-byte the same serialization
+used by `openusage spend` for the same state. The response has exactly 30 local-calendar buckets ending
+today; missing measurements are `null`, while measured zeroes remain non-null zero totals.
 
 ### `GET /v1/spend/:id`
 
@@ -148,7 +149,8 @@ contract. Codex's combined Credits UI row becomes two scalar resources: `credits
       "expiresAt": "2026-07-22T03:14:30.000Z",
       "stale": false,
       "historyScope": "machineLocal",
-      "sourceNote": "From local Claude logs",
+      "includesSyncedPeers": true,
+      "sourceNote": "Across your Macs · From local Claude logs",
       "cost": { "currency": "USD", "provenance": "estimated" },
       "periods": {
         "today": {
@@ -195,11 +197,15 @@ with optional grouped `variants`. `excludedModels` names unpriced models omitted
 `totalsComplete` is false when exclusions exist, true for an observed total without exclusions, and
 null when neither exists. Periods are derived only from canonical days and expose observed versus
 expected coverage. Cost precision is not rounded. V1 currency is USD, with `estimated` or `reported`
-provenance and `machineLocal` or `accountWide` scope.
+provenance and `machineLocal` or `accountWide` source scope. `includesSyncedPeers` says whether this
+provider's exported history includes downloaded iCloud inputs; when true, `sourceNote` carries the same
+"Across your Macs" provenance shown by the dashboard.
 
-Spend serialization deliberately reads each machine's local `ProviderSnapshot.usageHistory`, not the
-dashboard's optional iCloud-combined presentation. This keeps HTTP and the one-shot CLI identical when
-the app UI is closed and prevents account-wide sources from being counted twice.
+Spend serialization reads the rendered normalized history used by the dashboard. The one-shot CLI
+loads the same private iCloud documents directly, so HTTP and CLI stay aligned even when the app UI is
+closed. The merge applies only to sources declared `machineLocal`; account-wide sources such as Cursor
+remain single-counted. This Mac's own synced document is excluded in favor of its current local snapshot,
+so a stale self-copy cannot double-count or replace fresher local data.
 
 ## Legacy usage response shape
 

@@ -235,4 +235,42 @@ final class LocalSpendAPITests: XCTestCase {
         XCTAssertTrue(day["models"] is NSNull)
         XCTAssertTrue(day["totalsComplete"] is NSNull)
     }
+
+    func testSpendRoutePublishesTheRenderedICloudCombinedHistory() throws {
+        let day = "2026-07-22"
+        let local = snapshot(
+            id: "codex",
+            history: ProviderUsageHistory(series: DailyUsageSeries(daily: [
+                DailyUsageEntry(date: day, totalTokens: 100, costUSD: 1)
+            ]))
+        )
+        let combined = snapshot(
+            id: "codex",
+            history: ProviderUsageHistory(series: DailyUsageSeries(daily: [
+                DailyUsageEntry(date: day, totalTokens: 250, costUSD: 2.5)
+            ]))
+        )
+        let state = LocalUsageAPI.State(
+            enabledOrderedIDs: ["codex"],
+            knownIDs: ["codex"],
+            snapshots: ["codex": combined],
+            localSnapshots: ["codex": local],
+            historyDescriptors: ["codex": descriptor()],
+            syncedHistoryProviderIDs: ["codex"],
+            generatedAt: generatedAt
+        )
+
+        let response = LocalUsageAPI.respond(
+            method: "GET", path: "/v1/spend", state: state, calendar: calendar
+        )
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(response.body)) as? [String: Any])
+        let provider = try XCTUnwrap((root["providers"] as? [String: Any])?["codex"] as? [String: Any])
+        let today = try XCTUnwrap((provider["periods"] as? [String: Any])?["today"] as? [String: Any])
+        let total = try XCTUnwrap(today["total"] as? [String: Any])
+
+        XCTAssertEqual(total["tokens"] as? Int, 250)
+        XCTAssertEqual(total["costUSD"] as? Double, 2.5)
+        XCTAssertEqual(provider["includesSyncedPeers"] as? Bool, true)
+        XCTAssertEqual(provider["sourceNote"] as? String, "Across your Macs · Test history")
+    }
 }

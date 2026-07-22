@@ -11,8 +11,9 @@ struct ProviderSnapshot: Hashable, Sendable, Codable {
     var plan: String?
     var lines: [MetricLine]
     var refreshedAt: Date
-    /// Raw normalized daily history used to build spend rows. This always belongs to this Mac; peer
-    /// history is combined only in the in-memory rendered view and is never written into the cache.
+    /// Normalized daily history used to build spend rows. Entries in `localSnapshots` belong only to
+    /// this Mac; the in-memory rendered snapshot may replace this with the peer union. Only the local
+    /// snapshot is cached or written to iCloud, so a rendered union can never echo back out.
     var usageHistory: ProviderUsageHistory?
     /// A soft, non-blocking notice carried on a *successful* snapshot — e.g. Claude's "Re-login for live
     /// usage" when the saved login lacks the `user:profile` scope. Distinct from `errorCategory` (which is

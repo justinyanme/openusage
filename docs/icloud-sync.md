@@ -13,12 +13,13 @@ is never added across Macs. Disabling a provider immediately removes its peer co
 combined view and omits it from this Mac's next iCloud write, while its local cached snapshot remains.
 
 OpenUsage combines the valid files in memory and rebuilds Today, Yesterday, Last 30 Days, Usage Trend,
-unknown-model warnings, and model breakdowns. The same combined spend rows feed the dashboard, Total
-Spend, menu-bar pins, share cards, and the local HTTP API. Both `/v1/usage` and `/v1/limits` read the
-same rendered snapshots; the former is the deprecated UI-oriented format and the latter is the
-normalized format. Quotas, plans, balances, and provider errors remain this Mac's own values inside
-those snapshots. Rows retained in an older peer file are ignored once they fall outside the same
-calendar window used by the local history scanners.
+unknown-model warnings, and model breakdowns. The same combined spend history feeds the dashboard,
+Total Spend, menu-bar pins, share cards, `/v1/spend`, and `openusage spend`. The one-shot helper reads
+the private documents itself, so it produces the combined result even when the menu-bar app is closed.
+Both `/v1/usage` and `/v1/limits` continue to read the rendered snapshots; the former is the deprecated
+UI-oriented format and the latter is the normalized limits format. Quotas, plans, balances, and provider
+errors remain this Mac's own values inside those snapshots. Rows retained in an older peer file are
+ignored once they fall outside the same calendar window used by the local history scanners.
 
 This Mac updates its file after a five-minute refresh batch, a manual refresh, or a provider enablement
 change. iCloud delivery is eventually consistent, so another Mac can take longer than five minutes to
