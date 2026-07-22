@@ -12,11 +12,10 @@ enum UsageHistoryAggregator {
     ) -> [String: ProviderUsageHistory] {
         var inputs: [String: [ProviderUsageHistory]] = [:]
         let peerDocuments = UsageHistoryDocument.newestByDevice(peerDocuments)
-        let localClaudeCards = Set(descriptors.keys.filter {
-            ProviderAccountID.family(of: $0) == "claude"
-        }).union(providerIdentityKeys.keys.filter {
-            ProviderAccountID.family(of: $0) == "claude"
-        })
+        let localClaudeCards = claudeCardIDs(
+            descriptors: descriptors,
+            providerIdentityKeys: providerIdentityKeys
+        )
         for (providerID, descriptor) in descriptors where descriptor.scope == .machineLocal {
             if let local = localSnapshots[providerID]?.usageHistory {
                 inputs[providerID, default: []].append(local)
@@ -40,6 +39,47 @@ enum UsageHistoryAggregator {
         }
         let includedDays = UsageHistoryWindow.dayKeys(through: now)
         return inputs.mapValues { merge($0, includedDays: includedDays) }
+    }
+
+    /// Local card IDs that receive at least one peer document after applying the same account mapping
+    /// as `merged`. This keeps spend API provenance accurate when a peer's Claude card ID differs from
+    /// the matching local card ID.
+    static func providerIDsWithPeerHistory(
+        peerDocuments: [UsageHistoryDocument],
+        descriptors: [String: UsageHistoryDescriptor],
+        providerIdentityKeys: [String: String] = [:]
+    ) -> Set<String> {
+        let peerDocuments = UsageHistoryDocument.newestByDevice(peerDocuments)
+        let localClaudeCards = claudeCardIDs(
+            descriptors: descriptors,
+            providerIdentityKeys: providerIdentityKeys
+        )
+        return Set(descriptors.compactMap { providerID, descriptor in
+            guard descriptor.scope == .machineLocal else { return nil }
+            let hasPeer = peerDocuments.contains { document in
+                if ProviderAccountID.family(of: providerID) == "claude" {
+                    return claudeHistory(
+                        in: document,
+                        providerID: providerID,
+                        identity: providerIdentityKeys[providerID],
+                        allowsUnattributedHistory: localClaudeCards.count <= 1
+                    ) != nil
+                }
+                return document.providers[providerID] != nil
+            }
+            return hasPeer ? providerID : nil
+        })
+    }
+
+    private static func claudeCardIDs(
+        descriptors: [String: UsageHistoryDescriptor],
+        providerIdentityKeys: [String: String]
+    ) -> Set<String> {
+        Set(descriptors.keys.filter {
+            ProviderAccountID.family(of: $0) == "claude"
+        }).union(providerIdentityKeys.keys.filter {
+            ProviderAccountID.family(of: $0) == "claude"
+        })
     }
 
     private static func claudeHistory(
@@ -185,6 +225,10 @@ enum UsageHistorySnapshotRenderer {
         combined: Bool = true
     ) -> ProviderSnapshot {
         var result = snapshot
+        // `snapshots` is the rendered source shared by the dashboard and public APIs. Keep the
+        // normalized history in step with the rebuilt rows; `localSnapshots` remains the isolated
+        // cache/iCloud-write source, so peer data can never echo back out from this assignment.
+        result.usageHistory = history
         result.lines.removeAll { historyLabels.contains($0.label) }
         let baseNote = combined ? "Across your Macs · \(descriptor.sourceNote)" : descriptor.sourceNote
         SpendTileMapper.appendTokenUsage(

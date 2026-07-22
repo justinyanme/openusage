@@ -189,4 +189,59 @@ final class UsageReaderTests: XCTestCase {
 
         XCTAssertEqual(cli.data, try XCTUnwrap(http.body))
     }
+
+    func testSpendReadMergesICloudPeerHistoryWithFreshCachedLocalHistory() async throws {
+        let defaults = defaults()
+        defaults.set(true, forKey: ICloudUsageSyncStore.enabledKey)
+        defaults.set(UUID().uuidString.lowercased(), forKey: ICloudUsageSyncStore.deviceIDKey)
+        let provider = StubProvider()
+        provider.refreshedAt = Date()
+        ProviderSnapshotCache(userDefaults: defaults).store(await provider.refresh())
+        provider.refreshCount = 0
+
+        let day = DailyUsageAccumulator.dayKey(from: provider.refreshedAt)
+        let peer = UsageHistoryDocument(
+            deviceID: UUID().uuidString.lowercased(),
+            deviceName: "Peer Mac",
+            updatedAt: provider.refreshedAt,
+            providers: [
+                "stub": ProviderUsageHistory(series: DailyUsageSeries(daily: [
+                    DailyUsageEntry(date: day, totalTokens: 456, costUSD: 0.55)
+                ]))
+            ]
+        )
+        let fileStore = StubHistoryFileStore(documents: [peer])
+
+        let result = try await UsageReader(
+            userDefaults: defaults,
+            providers: [provider],
+            historyFileStore: fileStore
+        ).read(providerID: "stub", output: .spend)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: result.data) as? [String: Any])
+        let providerJSON = try XCTUnwrap((root["providers"] as? [String: Any])?["stub"] as? [String: Any])
+        let periods = try XCTUnwrap(providerJSON["periods"] as? [String: Any])
+        let today = try XCTUnwrap(periods["today"] as? [String: Any])
+        let total = try XCTUnwrap(today["total"] as? [String: Any])
+
+        XCTAssertEqual(provider.refreshCount, 0, "a fresh local cache must remain fresh while peers load")
+        XCTAssertEqual(total["tokens"] as? Int, 579)
+        XCTAssertEqual(total["costUSD"] as? Double, 1)
+        XCTAssertEqual(providerJSON["includesSyncedPeers"] as? Bool, true)
+        XCTAssertTrue(result.warnings.isEmpty)
+    }
+}
+
+private actor StubHistoryFileStore: UsageHistoryFileStoring {
+    let documents: [UsageHistoryDocument]
+
+    init(documents: [UsageHistoryDocument]) {
+        self.documents = documents
+    }
+
+    func loadDocuments() async throws -> UsageHistoryLoadResult {
+        UsageHistoryLoadResult(documents: documents, invalidFileMessages: [])
+    }
+
+    func write(_: UsageHistoryDocument) async throws {}
+    func delete(deviceID _: String) async throws {}
 }

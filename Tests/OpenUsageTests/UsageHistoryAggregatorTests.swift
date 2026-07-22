@@ -187,6 +187,14 @@ final class UsageHistoryAggregatorTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(merged[personalID]).series.daily.first?.totalTokens, 130)
         XCTAssertEqual(try XCTUnwrap(merged[workID]).series.daily.first?.totalTokens, 240)
         XCTAssertEqual(try XCTUnwrap(merged["codex"]).series.daily.first?.totalTokens, 350)
+        XCTAssertEqual(
+            UsageHistoryAggregator.providerIDsWithPeerHistory(
+                peerDocuments: [peer],
+                descriptors: [personalID: descriptor, workID: descriptor, "codex": descriptor],
+                providerIdentityKeys: [personalID: "user|personal", workID: "user|work"]
+            ),
+            [personalID, workID, "codex"]
+        )
     }
 
     func testMismatchedClaudeIdentityNeverFallsBackToMatchingCardID() throws {
@@ -214,6 +222,19 @@ final class UsageHistoryAggregatorTests: XCTestCase {
         )
 
         XCTAssertEqual(try XCTUnwrap(merged["claude"]).series.daily.first?.totalTokens, 100)
+        XCTAssertTrue(
+            UsageHistoryAggregator.providerIDsWithPeerHistory(
+                peerDocuments: [peer],
+                descriptors: [
+                    "claude": UsageHistoryDescriptor(
+                        scope: .machineLocal,
+                        estimatedCost: true,
+                        sourceNote: "logs"
+                    )
+                ],
+                providerIdentityKeys: ["claude": "user|personal"]
+            ).isEmpty
+        )
     }
 
     func testLegacyClaudeHistoryMergesOnlyWhenOneOrganizationExists() throws {

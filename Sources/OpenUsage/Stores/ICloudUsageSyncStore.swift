@@ -50,8 +50,9 @@ enum ICloudUsageSyncError: Error, LocalizedError {
 actor ICloudUsageHistoryFileStore: UsageHistoryFileStoring {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private let containerIdentifier: String?
 
-    init() {
+    init(containerIdentifier: String? = nil) {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -59,6 +60,7 @@ actor ICloudUsageHistoryFileStore: UsageHistoryFileStoring {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         self.decoder = decoder
+        self.containerIdentifier = containerIdentifier
     }
 
     func loadDocuments() async throws -> UsageHistoryLoadResult {
@@ -112,7 +114,9 @@ actor ICloudUsageHistoryFileStore: UsageHistoryFileStoring {
     }
 
     private func historyDirectory(create: Bool) throws -> URL {
-        guard let container = FileManager.default.url(forUbiquityContainerIdentifier: nil) else {
+        let container = FileManager.default.url(forUbiquityContainerIdentifier: containerIdentifier)
+            ?? fallbackContainerURL()
+        guard let container else {
             throw ICloudUsageSyncError.unavailable
         }
         let directory = container
@@ -123,6 +127,26 @@ actor ICloudUsageHistoryFileStore: UsageHistoryFileStoring {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
         return directory
+    }
+
+    /// A separately launched helper can lack a main-bundle iCloud context even though it lives inside
+    /// the signed app. OpenUsage is not sandboxed, so fall back to the already-existing local mirror
+    /// for the explicit, trusted container ID read from the containing app's Info.plist. Never create
+    /// the container this way: iCloud remains responsible for provisioning and downloading it.
+    private func fallbackContainerURL() -> URL? {
+        guard let containerIdentifier,
+              containerIdentifier.range(
+                  of: #"^iCloud\.[A-Za-z0-9.-]+$"#,
+                  options: .regularExpression
+              ) != nil
+        else { return nil }
+        let directoryName = containerIdentifier.replacingOccurrences(of: ".", with: "~")
+        let candidate = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Mobile Documents", isDirectory: true)
+            .appendingPathComponent(directoryName, isDirectory: true)
+        guard FileManager.default.fileExists(atPath: candidate.path) else { return nil }
+        return candidate
     }
 
     private func coordinatedRead(_ url: URL) throws -> Data {
@@ -150,8 +174,8 @@ actor ICloudUsageHistoryFileStore: UsageHistoryFileStoring {
 @MainActor
 @Observable
 final class ICloudUsageSyncStore {
-    private static let enabledKey = "openusage.icloudSync.enabled.v1"
-    private static let deviceIDKey = "openusage.icloudSync.deviceID.v1"
+    static let enabledKey = "openusage.icloudSync.enabled.v1"
+    static let deviceIDKey = "openusage.icloudSync.deviceID.v1"
 
     private let defaults: UserDefaults
     private let fileStore: any UsageHistoryFileStoring
@@ -325,6 +349,10 @@ final class ICloudUsageSyncStore {
     private static func normalizedDeviceID(_ value: String?) -> String? {
         guard let value, UUID(uuidString: value) != nil else { return nil }
         return value.lowercased()
+    }
+
+    static func persistedDeviceID(defaults: UserDefaults) -> String? {
+        normalizedDeviceID(defaults.string(forKey: deviceIDKey))
     }
 
     private func startObserving() {
