@@ -191,6 +191,7 @@ final class AppContainer {
                 localSnapshots: dataStore.localSnapshots,
                 limitDescriptors: registry.limitDescriptorsByProvider,
                 historyDescriptors: registry.historyDescriptorsByProvider,
+                syncedHistoryProviderIDs: dataStore.syncedHistoryProviderIDs,
                 errors: dataStore.providerErrors
             )
         })

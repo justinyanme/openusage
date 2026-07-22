@@ -43,7 +43,10 @@ struct OpenUsageCLI {
             guard let defaults = UserDefaults(suiteName: app.bundleIdentifier) else {
                 throw CLIError.appDefaultsUnavailable
             }
-            let result = try await UsageReader(userDefaults: defaults).read(
+            let result = try await UsageReader(
+                userDefaults: defaults,
+                iCloudContainerIdentifier: app.iCloudContainerIdentifier
+            ).read(
                 providerID: arguments.providerID,
                 force: arguments.force,
                 output: arguments.command == .spend ? .spend : .limits

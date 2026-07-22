@@ -1,8 +1,8 @@
 import Foundation
 
 /// Provider-neutral spend-history serializer shared byte-for-byte by the one-shot CLI and local HTTP API.
-/// It reads each provider's normalized history from this machine's snapshot rather than rendered
-/// dashboard rows or the optional iCloud union.
+/// It reads normalized history from the rendered snapshot set, so iCloud-enabled callers export the
+/// same cross-Mac history shown by the dashboard while callers without sync keep machine-local data.
 enum LocalSpendAPI {
     static let schema = "openusage.spend.v1"
 
@@ -21,7 +21,7 @@ enum LocalSpendAPI {
         let includedDays = Set(dayKeys)
         var providers: [String: WireProvider] = [:]
         for providerID in providerIDs {
-            guard let snapshot = state.localSnapshots[providerID],
+            guard let snapshot = state.snapshots[providerID],
                   let history = snapshot.usageHistory,
                   let descriptor = state.historyDescriptors[providerID]
             else { continue }
@@ -32,6 +32,7 @@ enum LocalSpendAPI {
                 dayKeys: dayKeys,
                 includedDays: includedDays,
                 generatedAt: state.generatedAt,
+                includesSyncedPeers: state.syncedHistoryProviderIDs.contains(providerID),
                 hasError: state.errors[providerID] != nil
             )
         }
@@ -94,6 +95,7 @@ enum LocalSpendAPI {
         let expiresAt: String
         let stale: Bool
         let historyScope: String
+        let includesSyncedPeers: Bool
         let sourceNote: String
         let cost: WireCost
         let periods: WirePeriods
@@ -106,6 +108,7 @@ enum LocalSpendAPI {
             dayKeys: [String],
             includedDays: Set<String>,
             generatedAt: Date,
+            includesSyncedPeers: Bool,
             hasError: Bool
         ) {
             displayName = snapshot.displayName
@@ -114,7 +117,10 @@ enum LocalSpendAPI {
             expiresAt = OpenUsageISO8601.string(from: expiry)
             stale = hasError || generatedAt >= expiry
             historyScope = descriptor.scope.rawValue
-            sourceNote = descriptor.sourceNote
+            self.includesSyncedPeers = includesSyncedPeers
+            sourceNote = includesSyncedPeers
+                ? "Across your Macs · \(descriptor.sourceNote)"
+                : descriptor.sourceNote
             cost = WireCost(
                 currency: "USD",
                 provenance: descriptor.estimatedCost ? .estimated : .reported

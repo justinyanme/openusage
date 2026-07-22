@@ -16,13 +16,15 @@ enum LocalUsageAPI {
         /// The rendered snapshot set shared by both routes. `/v1/usage` and `/v1/limits` only differ
         /// in how they project this data onto their legacy and normalized wire formats.
         var snapshots: [String: ProviderSnapshot]
-        /// Last-good snapshots produced on this Mac. Spend serialization deliberately excludes the
-        /// dashboard's optional iCloud peer union so HTTP and one-shot CLI remain identical.
+        /// Last-good snapshots produced on this Mac. Kept separate from rendered snapshots so peer
+        /// history is never persisted or written back to iCloud.
         var localSnapshots: [String: ProviderSnapshot] = [:]
         /// Only descriptors explicitly opted into the stable limits contract.
         var limitDescriptors: [String: [WidgetDescriptor]] = [:]
         /// Per-provider provenance and scope for normalized spend-history exports.
         var historyDescriptors: [String: UsageHistoryDescriptor] = [:]
+        /// Rendered histories that include downloaded iCloud peer inputs.
+        var syncedHistoryProviderIDs: Set<String> = []
         var errors: [String: String] = [:]
         var generatedAt = Date()
 

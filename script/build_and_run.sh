@@ -197,7 +197,10 @@ fi
 "$ROOT_DIR/script/embed_sparkle.sh" "$APP_BUNDLE" "$APP_BINARY" "$CODESIGN_IDENTITY" "--options runtime"
 
 if [ -n "$CODESIGN_IDENTITY" ]; then
-  /usr/bin/codesign --force --options runtime --sign "$CODESIGN_IDENTITY" "$CLI_BINARY" >/dev/null
+  /usr/bin/codesign --force --options runtime \
+    --sign "$CODESIGN_IDENTITY" \
+    --entitlements "$SIGN_ENTITLEMENTS" \
+    "$CLI_BINARY" >/dev/null
   # Not --deep: the Sparkle framework is already signed above and must keep that signature.
   /usr/bin/codesign --force --options runtime \
     --sign "$CODESIGN_IDENTITY" \
@@ -205,7 +208,7 @@ if [ -n "$CODESIGN_IDENTITY" ]; then
     "$APP_BUNDLE" >/dev/null
   echo "==> signed with: $CODESIGN_IDENTITY"
 else
-  /usr/bin/codesign --force --sign - "$CLI_BINARY" >/dev/null
+  /usr/bin/codesign --force --sign - --entitlements "$SIGN_ENTITLEMENTS" "$CLI_BINARY" >/dev/null
   /usr/bin/codesign --force --sign - --entitlements "$SIGN_ENTITLEMENTS" "$APP_BUNDLE" >/dev/null
   echo "WARNING: no Apple Development identity found; ad-hoc signed." >&2
 fi

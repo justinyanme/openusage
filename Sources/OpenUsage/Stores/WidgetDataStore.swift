@@ -104,6 +104,9 @@ final class WidgetDataStore {
     @ObservationIgnored private var snapshotRebuildDeferrals = 0
     @ObservationIgnored private var pendingSnapshotRebuild = false
     @ObservationIgnored private var coalescedRebuildTask: Task<Void, Never>?
+    /// Local card IDs whose rendered normalized history includes at least one downloaded peer input.
+    /// Public spend serializers use this only as provenance; local cache/iCloud writes remain isolated.
+    private(set) var syncedHistoryProviderIDs: Set<String> = []
 
     /// Global meter style: whether every bounded tile (and the menu-bar value) renders as "used" or
     /// "left/remaining". Persisted so the choice survives relaunch; defaults to `.remaining`.
@@ -525,6 +528,7 @@ final class WidgetDataStore {
     private func rebuildRenderedSnapshots() {
         guard !peerHistoryDocuments.isEmpty else {
             snapshots = localSnapshots
+            syncedHistoryProviderIDs = []
             return
         }
         let renderDate = now()
@@ -539,6 +543,11 @@ final class WidgetDataStore {
             descriptors: enabledDescriptors,
             providerIdentityKeys: providerIdentityKeys,
             now: renderDate
+        )
+        syncedHistoryProviderIDs = UsageHistoryAggregator.providerIDsWithPeerHistory(
+            peerDocuments: peerHistoryDocuments,
+            descriptors: enabledDescriptors,
+            providerIdentityKeys: providerIdentityKeys
         )
         var rendered = localSnapshots
         for (providerID, history) in merged {
