@@ -491,14 +491,17 @@ final class CodexUsageMapperTests: XCTestCase {
 @MainActor
 final class CodexProviderTests: XCTestCase {
     func testNoUsageDataBadgeIsDroppedWhenLocalLogsHaveSpend() async throws {
-        let now = OpenUsageISO8601.date(from: "2026-02-20T14:30:00.000Z")!
+        let now = Calendar.current.date(from: DateComponents(year: 2026, month: 2, day: 20, hour: 12))!
         // The live usage API returns nothing mappable (empty body -> no metric lines)...
         let httpClient = FakeHTTPClient(response: HTTPResponse(statusCode: 200, headers: [:], body: Data("{}".utf8)))
         let home = try CodexLogFixture.makeHome(files: [
             "sessions/rollout-1.jsonl": [
-                CodexLogFixture.turnContext(timestamp: "2026-02-20T14:00:00.000Z", model: "gpt-5.2"),
+                CodexLogFixture.turnContext(
+                    timestamp: OpenUsageISO8601.string(from: now.addingTimeInterval(-120)),
+                    model: "gpt-5.2"
+                ),
                 CodexLogFixture.tokenCount(
-                    timestamp: "2026-02-20T14:01:00.000Z",
+                    timestamp: OpenUsageISO8601.string(from: now.addingTimeInterval(-60)),
                     last: CodexLogFixture.usage(input: 100, output: 50)
                 )
             ].joined(separator: "\n")
@@ -541,11 +544,9 @@ final class CodexProviderTests: XCTestCase {
 
     func testOpenCodeCodexOAuthUsageIsMergedIntoCodexHistory() async throws {
         // A far-future fixture keeps PiUsageScanner.shared from folding the developer's real local pi
-        // history into this integration test.
-        let now = OpenUsageISO8601.date(from: "2099-02-20T16:00:00.000Z")!
-        let milliseconds = Int(OpenUsageISO8601.date(
-            from: "2099-02-20T14:00:00.000Z"
-        )!.timeIntervalSince1970 * 1000)
+        // history into this integration test. Local noon keeps the usage on Today in every time zone.
+        let now = Calendar.current.date(from: DateComponents(year: 2099, month: 2, day: 20, hour: 12))!
+        let milliseconds = Int(now.addingTimeInterval(-60).timeIntervalSince1970 * 1000)
         let openCodeRows = "[[\(milliseconds),0,150,\"gpt-test\",100,0,0,50,0,\"open-code-message\"]]"
         let openCodeScanner = OpenCodeCodexUsageScanner(
             authStore: OpenCodeAuthStore(

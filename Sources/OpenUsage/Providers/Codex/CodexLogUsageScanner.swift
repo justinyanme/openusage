@@ -82,7 +82,7 @@ actor CodexLogUsageScanner {
     /// Scan the last `daysBack` days of Codex rollouts. Returns `nil` when no Codex home or no
     /// session files exist (the spend tiles then render "No data").
     func scan(
-        daysBack: Int = 30, now: Date = Date(), pricing: ModelPricing, fallbackModel: String? = nil
+        daysBack: Int = UsageHistoryWindow.previousDays, now: Date = Date(), pricing: ModelPricing, fallbackModel: String? = nil
     ) async -> LogUsageScan? {
         let homes = codexHomes()
         let since = JSONLScanning.sinceDate(daysBack: daysBack, now: now)

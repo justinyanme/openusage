@@ -232,9 +232,9 @@ final class GrokProviderTests: XCTestCase {
             return XCTFail("expected a Usage Trend chart line")
         }
         XCTAssertEqual(note, "From your Grok logs (estimated)")
-        XCTAssertEqual(points.count, 31)
+        XCTAssertEqual(points.count, 30)
         XCTAssertEqual(points.last?.value, 1_000_000)
-        XCTAssertEqual(points[29].value, 1_000_000)
+        XCTAssertEqual(points[28].value, 1_000_000)
     }
 
     func testPeriodWithoutUsageLeavesTileUnbacked() async throws {

@@ -21,9 +21,9 @@ struct DailyUsageSeries: Hashable, Sendable, Codable {
 }
 
 /// The calendar window shared by local scanners, combined iCloud history, and the usage trend.
-/// `previousDays` excludes today, so 30 means today plus the previous 30 calendar days.
+/// `previousDays` excludes today, so 29 means exactly 30 calendar days including today.
 enum UsageHistoryWindow {
-    static let previousDays = 30
+    static let previousDays = 29
 
     static func dayKeys(through now: Date, calendar: Calendar = .current) -> Set<String> {
         let today = calendar.startOfDay(for: now)
