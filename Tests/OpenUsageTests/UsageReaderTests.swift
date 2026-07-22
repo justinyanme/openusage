@@ -162,4 +162,31 @@ final class UsageReaderTests: XCTestCase {
 
         XCTAssertEqual(root["schema"] as? String, "openusage.limits.v1")
     }
+
+    func testSpendCLIBytesEqualHTTPRouterBytesForTheSameCapturedState() async throws {
+        let defaults = defaults()
+        let provider = StubProvider()
+        provider.refreshedAt = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
+        let cli = try await UsageReader(userDefaults: defaults, providers: [provider])
+            .read(force: true, output: .spend)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: cli.data) as? [String: Any])
+        let generatedAtText = try XCTUnwrap(root["generatedAt"] as? String)
+        let generatedAt = try XCTUnwrap(OpenUsageISO8601.date(from: generatedAtText))
+        let snapshots = ProviderSnapshotCache(userDefaults: defaults)
+            .loadSnapshots(providerIDs: ["stub"])
+        let registry = WidgetRegistry.from([provider])
+        let state = LocalUsageAPI.State(
+            enabledOrderedIDs: ["stub"],
+            knownIDs: ["stub"],
+            snapshots: snapshots,
+            localSnapshots: snapshots,
+            limitDescriptors: registry.limitDescriptorsByProvider,
+            historyDescriptors: registry.historyDescriptorsByProvider,
+            generatedAt: generatedAt
+        )
+
+        let http = LocalUsageAPI.respond(method: "GET", path: "/v1/spend", state: state)
+
+        XCTAssertEqual(cli.data, try XCTUnwrap(http.body))
+    }
 }

@@ -2,6 +2,28 @@ import Darwin
 import Foundation
 import OpenUsage
 
+struct CLIOutput: Equatable, Sendable {
+    let stdout: Data
+    let stderr: Data
+    let exitCode: Int32
+
+    static func make(data: Data, warnings: [String]) -> CLIOutput {
+        var stdout = data
+        stdout.append(contentsOf: "\n".utf8)
+        let stderr = Data(
+            warnings
+                .map { "openusage: warning: \($0)\n" }
+                .joined()
+                .utf8
+        )
+        return CLIOutput(
+            stdout: stdout,
+            stderr: stderr,
+            exitCode: warnings.isEmpty ? 0 : 4
+        )
+    }
+}
+
 @main
 struct OpenUsageCLI {
     static func main() async {
@@ -26,12 +48,10 @@ struct OpenUsageCLI {
                 force: arguments.force,
                 output: arguments.command == .spend ? .spend : .limits
             )
-            FileHandle.standardOutput.write(result.data)
-            FileHandle.standardOutput.write(Data("\n".utf8))
-            if !result.warnings.isEmpty {
-                result.warnings.forEach { writeError("warning: \($0)") }
-                exit(4)
-            }
+            let output = CLIOutput.make(data: result.data, warnings: result.warnings)
+            FileHandle.standardOutput.write(output.stdout)
+            FileHandle.standardError.write(output.stderr)
+            if output.exitCode != 0 { exit(output.exitCode) }
         } catch CLIError.usage(let message) {
             fail("\(message)\nRun 'openusage --help' for usage.", code: 2)
         } catch CLIError.appDefaultsUnavailable {
