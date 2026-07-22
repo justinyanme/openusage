@@ -126,7 +126,7 @@ final class GrokLogUsageScannerTests: XCTestCase {
             homeDirectory: { URL(fileURLWithPath: "/home/ignored") }
         )
 
-        let usage = await scanner.scan(daysBack: 30, now: OpenUsageISO8601.date(from: "2026-06-18T00:00:00.000Z")!, pricing: TestPricing.bundled)
+        let usage = await scanner.scan(now: OpenUsageISO8601.date(from: "2026-06-18T00:00:00.000Z")!, pricing: TestPricing.bundled)
 
         XCTAssertEqual(usage?.series.daily.first?.totalTokens, 1_000_000)
     }

@@ -410,7 +410,7 @@ final class CodexUsageMapperTests: XCTestCase {
         SpendTileMapper.appendTokenUsage(
             usage,
             to: &lines,
-            now: makeDate("2026-02-20T16:00:00.000Z")
+            now: localDate(2026, 2, 20)
         )
 
         XCTAssertEqual(values(lines, "Today"),
@@ -432,7 +432,7 @@ final class CodexUsageMapperTests: XCTestCase {
         SpendTileMapper.appendTokenUsage(
             DailyUsageSeries(daily: [DailyUsageEntry(date: "2026-02-19", totalTokens: 0, costUSD: nil)]),
             to: &lines,
-            now: makeDate("2026-02-20T16:00:00.000Z")
+            now: localDate(2026, 2, 20)
         )
 
         XCTAssertTrue(lines.isEmpty, "an all-zero window appends no spend tiles")
@@ -445,7 +445,7 @@ final class CodexUsageMapperTests: XCTestCase {
         SpendTileMapper.appendTokenUsage(
             DailyUsageSeries(daily: [DailyUsageEntry(date: "2026-02-20", totalTokens: 1_200_000, costUSD: nil)]),
             to: &lines,
-            now: makeDate("2026-02-20T16:00:00.000Z")
+            now: localDate(2026, 2, 20)
         )
 
         XCTAssertEqual(values(lines, "Today"), [MetricValue(number: 1_200_000, kind: .count, label: "tokens")])
@@ -650,19 +650,26 @@ final class CodexUsageMapperTests: XCTestCase {
     private func makeDate(_ value: String) -> Date {
         OpenUsageISO8601.date(from: value)!
     }
+
+    private func localDate(_ year: Int, _ month: Int, _ day: Int) -> Date {
+        Calendar.current.date(from: DateComponents(year: year, month: month, day: day, hour: 12))!
+    }
 }
 
 @MainActor
 final class CodexProviderTests: XCTestCase {
     func testNoUsageDataBadgeIsDroppedWhenLocalLogsHaveSpend() async throws {
-        let now = OpenUsageISO8601.date(from: "2026-02-20T16:00:00.000Z")!
+        let now = Calendar.current.date(from: DateComponents(year: 2026, month: 2, day: 20, hour: 12))!
         // The live usage API returns nothing mappable (empty body -> no metric lines)...
         let httpClient = FakeHTTPClient(response: HTTPResponse(statusCode: 200, headers: [:], body: Data("{}".utf8)))
         let home = try CodexLogFixture.makeHome(files: [
             "sessions/rollout-1.jsonl": [
-                CodexLogFixture.turnContext(timestamp: "2026-02-20T14:00:00.000Z", model: "gpt-5.2"),
+                CodexLogFixture.turnContext(
+                    timestamp: OpenUsageISO8601.string(from: now.addingTimeInterval(-120)),
+                    model: "gpt-5.2"
+                ),
                 CodexLogFixture.tokenCount(
-                    timestamp: "2026-02-20T14:01:00.000Z",
+                    timestamp: OpenUsageISO8601.string(from: now.addingTimeInterval(-60)),
                     last: CodexLogFixture.usage(input: 100, output: 50)
                 )
             ].joined(separator: "\n")

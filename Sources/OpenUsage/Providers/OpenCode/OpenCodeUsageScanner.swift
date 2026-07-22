@@ -51,7 +51,7 @@ struct OpenCodeUsageScanner: Sendable {
     /// to "No data" via `SpendTileMapper`). Throws `databaseUnreadable` when databases exist but none
     /// could be read — an all-failed refresh has no data source and must not render as zero usage.
     /// 33 days covers the widest meter window (anchored month) plus slack; the tiles/trend are
-    /// re-bounded to 31 calendar days below.
+    /// re-bounded to the shared 30-calendar-day window below.
     func scan(now: Date, daysBack: Int = 33, hasGoKey: Bool = false) async throws -> OpenCodeUsageScan? {
         let paths: [String]
         do {
@@ -106,7 +106,7 @@ struct OpenCodeUsageScanner: Sendable {
 
         // Combined hosted daily series (opencode-go + opencode) → the spend tiles + usage trend. Cost is
         // authoritative, so every row is "priced": feed it straight into the shared accumulator.
-        let tileSince = JSONLScanning.sinceDate(daysBack: 30, now: now)
+        let tileSince = JSONLScanning.sinceDate(daysBack: UsageHistoryWindow.previousDays, now: now)
         var accumulator = DailyUsageAccumulator()
         for row in rows {
             let date = Date(timeIntervalSince1970: row.ms / 1000)

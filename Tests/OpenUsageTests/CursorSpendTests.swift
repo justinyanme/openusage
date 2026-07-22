@@ -90,7 +90,7 @@ final class CursorSpendRangeTests: XCTestCase {
             makeRow(date: now, cost: 1.00, tokens: 100),                                              // today
             makeRow(date: cal.date(byAdding: .day, value: -1, to: now)!, cost: 2.00, tokens: 200),    // yesterday
             makeRow(date: startOfLast30, cost: 0.50, tokens: 50),                                     // -29d edge: last30 only
-            makeRow(date: cal.date(byAdding: .day, value: -40, to: now)!, cost: 5.00, tokens: 999)    // old (provider scopes the fetch)
+            makeRow(date: cal.date(byAdding: .day, value: -30, to: now)!, cost: 5.00, tokens: 999)    // outside the strict window
         ]
 
         var lines: [MetricLine] = []
@@ -99,8 +99,8 @@ final class CursorSpendRangeTests: XCTestCase {
         // Tokens come from Cursor; dollars are calculated locally and marked as estimated.
         XCTAssertEqual(values(lines, "Today"), [MetricValue(number: 1.00, kind: .dollars, estimated: true), MetricValue(number: 100, kind: .count, label: "tokens")])
         XCTAssertEqual(values(lines, "Yesterday"), [MetricValue(number: 2.00, kind: .dollars, estimated: true), MetricValue(number: 200, kind: .count, label: "tokens")])
-        // Last 30 Days sums every fetched day (the provider scopes the CSV to a 30-day window).
-        XCTAssertEqual(values(lines, "Last 30 Days"), [MetricValue(number: 8.50, kind: .dollars, estimated: true), MetricValue(number: 1349, kind: .count, label: "tokens")])
+        // Last 30 Days includes today through -29d even when a caller supplies an older row.
+        XCTAssertEqual(values(lines, "Last 30 Days"), [MetricValue(number: 3.50, kind: .dollars, estimated: true), MetricValue(number: 350, kind: .count, label: "tokens")])
     }
 
     func testZeroActivityLeavesTilesUnbacked() {
@@ -132,9 +132,9 @@ final class CursorSpendRangeTests: XCTestCase {
         XCTAssertEqual(label, "Usage Trend")
         // Cursor's tokens come from its server export, so the note names that source, not local logs.
         XCTAssertEqual(note, "From your Cursor usage export")
-        XCTAssertEqual(points.count, 31, "one bar per calendar day across the 31-day window")
+        XCTAssertEqual(points.count, 30, "one bar per calendar day across the 30-day window")
         XCTAssertEqual(points.last?.value, 100, "today's tokens land on the last bar")
-        XCTAssertEqual(points[29].value, 200, "yesterday's tokens land on the second-to-last bar")
+        XCTAssertEqual(points[28].value, 200, "yesterday's tokens land on the second-to-last bar")
     }
 
     func testNoRowsLeavesNoUsageTrend() {

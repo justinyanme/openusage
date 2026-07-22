@@ -26,10 +26,14 @@ enum SpendTileMapper {
         modelUsage: ModelUsageSeries? = nil,
         modelSourceNote: String? = nil
     ) {
+        let includedDays = UsageHistoryWindow.dayKeys(through: now)
+        let daily = usage.daily.filter { entry in
+            dayKey(fromUsageDate: entry.date).map(includedDays.contains) == true
+        }
         let today = dayKey(from: now)
         let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now).map(dayKey(from:))
 
-        if let entry = usage.daily.first(where: { dayKey(fromUsageDate: $0.date) == today }), hasUsage(entry) {
+        if let entry = daily.first(where: { dayKey(fromUsageDate: $0.date) == today }), hasUsage(entry) {
             lines.append(dayUsageLine(label: "Today", entry: entry, estimated: estimated,
                                       unknownModels: sortedModels(unknownModelsByDay[today]),
                                       modelBreakdown: modelBreakdown(
@@ -40,7 +44,7 @@ enum SpendTileMapper {
                                         sourceNote: modelSourceNote
                                       )))
         }
-        if let entry = usage.daily.first(where: { dayKey(fromUsageDate: $0.date) == yesterday }), hasUsage(entry) {
+        if let entry = daily.first(where: { dayKey(fromUsageDate: $0.date) == yesterday }), hasUsage(entry) {
             lines.append(dayUsageLine(label: "Yesterday", entry: entry, estimated: estimated,
                                       unknownModels: sortedModels(yesterday.flatMap { unknownModelsByDay[$0] }),
                                       modelBreakdown: modelBreakdown(
@@ -52,17 +56,20 @@ enum SpendTileMapper {
                                       )))
         }
 
-        let totalTokens = usage.daily.reduce(0) { $0 + $1.totalTokens }
-        let costSamples = usage.daily.compactMap(\.costUSD)
+        let totalTokens = daily.reduce(0) { $0 + $1.totalTokens }
+        let costSamples = daily.compactMap(\.costUSD)
         let totalCost = costSamples.isEmpty ? nil : costSamples.reduce(0, +)
         if totalTokens > 0 || (totalCost ?? 0) > 0 {
-            let allUnknown = unknownModelsByDay.values.reduce(into: Set<String>()) { $0.formUnion($1) }
+            let allUnknown = unknownModelsByDay.reduce(into: Set<String>()) { result, entry in
+                guard includedDays.contains(entry.key) else { return }
+                result.formUnion(entry.value)
+            }
             lines.append(.values(label: "Last 30 Days",
                                  values: spendValues(tokens: totalTokens, costUSD: totalCost, estimated: estimated),
                                  unknownModels: sortedModels(allUnknown),
                                  modelBreakdown: modelBreakdown(
                                     modelUsage,
-                                    days: Set(usage.daily.compactMap { dayKey(fromUsageDate: $0.date) }),
+                                    days: Set(daily.compactMap { dayKey(fromUsageDate: $0.date) }),
                                     totalTokens: totalTokens,
                                     totalCostUSD: totalCost,
                                     sourceNote: modelSourceNote
@@ -86,7 +93,7 @@ enum SpendTileMapper {
         lines.append(.chart(label: "Usage Trend", points: points, note: note))
     }
 
-    /// Per-day token points across the queried window (today + the previous 30 days), oldest first.
+    /// Per-day token points across the queried window (today + the previous 29 days), oldest first.
     /// Tokens are summed per calendar day, so two source rows that normalize to the same date (mixed
     /// formats) become one bar carrying their total rather than two bars splitting it. Idle days are
     /// zero-filled, not dropped, so the sparkline stays calendar-true: a gap shows as a short bar in

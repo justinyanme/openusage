@@ -44,7 +44,7 @@ struct GrokLogUsageScanner: Sendable {
     ///
     /// `async` and nonisolated (this is a plain `Sendable` struct, not `@MainActor`), so the whole-file
     /// read + parse runs off the main actor when a `@MainActor` provider `await`s it.
-    func scan(daysBack: Int = 30, now: Date = Date(), pricing: ModelPricing) async -> LogUsageScan? {
+    func scan(daysBack: Int = UsageHistoryWindow.previousDays, now: Date = Date(), pricing: ModelPricing) async -> LogUsageScan? {
         let path = logPath
         guard files.exists(path) else {
             await readFailureReporter.update(checkedPaths: [path], failingPaths: [])

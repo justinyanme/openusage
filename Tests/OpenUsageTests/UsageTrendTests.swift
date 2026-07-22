@@ -23,23 +23,23 @@ final class UsageTrendTests: XCTestCase {
         }
         XCTAssertEqual(label, "Usage Trend")
         XCTAssertEqual(note, "Estimated from local Claude logs at API rates.")
-        // One bar per calendar day across the 31-day window (today + 30 back), oldest first.
-        XCTAssertEqual(points.count, 31)
-        XCTAssertEqual(points.first?.label, dayLabel(2026, 5, 22), "window starts 30 days before today")
+        // One bar per calendar day across the 30-day window (today + 29 back), oldest first.
+        XCTAssertEqual(points.count, 30)
+        XCTAssertEqual(points.first?.label, dayLabel(2026, 5, 23), "window starts 29 days before today")
         XCTAssertEqual(points.last?.label, dayLabel(2026, 6, 21), "window ends today")
-        XCTAssertEqual(Set(points.map(\.label)).count, 31, "every day in the window is a distinct bar")
+        XCTAssertEqual(Set(points.map(\.label)).count, 30, "every day in the window is a distinct bar")
         // Labels are the app's month/day style ("Jun 21"), not the old hardcoded "6/21" — pinned without
         // a locale-specific literal: no slash, and a month name rather than a bare number.
         let lastLabel = try XCTUnwrap(points.last?.label)
         XCTAssertFalse(lastLabel.contains("/"), "not the old numeric M/d format")
         XCTAssertTrue(lastLabel.contains(where: \.isLetter), "carries a localized month name")
         // The three active days carry their tokens; every other day is a zero bar, not a dropped gap.
-        XCTAssertEqual(points[28].value, 500)          // 6/19
-        XCTAssertEqual(points[29].value, 1_500_000)    // 6/20
-        XCTAssertEqual(points[30].value, 222_000_000)  // 6/21
+        XCTAssertEqual(points[27].value, 500)          // 6/19
+        XCTAssertEqual(points[28].value, 1_500_000)    // 6/20
+        XCTAssertEqual(points[29].value, 222_000_000)  // 6/21
         XCTAssertEqual(points[0].value, 0, "an idle day is a zero bar")
         // Pre-formatted readouts: compact counts with a "tokens" unit.
-        XCTAssertEqual(points[28...30].map(\.valueLabel), ["500 tokens", "1.5M tokens", "222M tokens"])
+        XCTAssertEqual(points[27...29].map(\.valueLabel), ["500 tokens", "1.5M tokens", "222M tokens"])
         XCTAssertEqual(points[0].valueLabel, "0 tokens")
     }
 
@@ -56,10 +56,10 @@ final class UsageTrendTests: XCTestCase {
         )
 
         guard case .chart(_, let points, _) = lines.first else { return XCTFail("expected a chart line") }
-        XCTAssertEqual(points[28].label, dayLabel(2026, 6, 19))
-        XCTAssertEqual(points[29].label, dayLabel(2026, 6, 20))
-        XCTAssertEqual(points[29].value, 0, "the gap day is a zero bar, not removed")
-        XCTAssertEqual(points[30].label, dayLabel(2026, 6, 21))
+        XCTAssertEqual(points[27].label, dayLabel(2026, 6, 19))
+        XCTAssertEqual(points[28].label, dayLabel(2026, 6, 20))
+        XCTAssertEqual(points[28].value, 0, "the gap day is a zero bar, not removed")
+        XCTAssertEqual(points[29].label, dayLabel(2026, 6, 21))
     }
 
     func testTrendWindowEndsAtTodayEvenWhenUsageIsOlder() {
@@ -73,14 +73,14 @@ final class UsageTrendTests: XCTestCase {
 
         guard case .chart(_, let points, _) = lines.first else { return XCTFail("expected a chart line") }
         XCTAssertEqual(points.last?.label, dayLabel(2026, 6, 21))
-        XCTAssertEqual(points[28].value, 500, "the one active day keeps its tokens")
+        XCTAssertEqual(points[27].value, 500, "the one active day keeps its tokens")
+        XCTAssertEqual(points[28].value, 0)
         XCTAssertEqual(points[29].value, 0)
-        XCTAssertEqual(points[30].value, 0)
     }
 
     func testTrendDropsDaysOlderThanTheWindow() {
-        // 40 distinct days (May 1–31, then June 1–9) with today = 6/9. The window is the 31 days ending
-        // today (5/10 … 6/9), so May 1–9 fall outside it and are dropped.
+        // 40 distinct days (May 1–31, then June 1–9) with today = 6/9. The window is the 30 days ending
+        // today (5/11 … 6/9), so May 1–10 fall outside it and are dropped.
         var daily = (1...31).map { DailyUsageEntry(date: String(format: "2026-05-%02d", $0), totalTokens: $0 * 1000, costUSD: nil) }
         daily += (1...9).map { DailyUsageEntry(date: String(format: "2026-06-%02d", $0), totalTokens: $0 * 1000, costUSD: nil) }
 
@@ -88,8 +88,8 @@ final class UsageTrendTests: XCTestCase {
         SpendTileMapper.appendUsageTrend(DailyUsageSeries(daily: daily), to: &lines, now: date(2026, 6, 9), note: "n")
 
         guard case .chart(_, let points, _) = lines.first else { return XCTFail("expected a chart line") }
-        XCTAssertEqual(points.count, 31)
-        XCTAssertEqual(points.first?.label, dayLabel(2026, 5, 10), "days older than 30 back are outside the window")
+        XCTAssertEqual(points.count, 30)
+        XCTAssertEqual(points.first?.label, dayLabel(2026, 5, 11), "days older than 29 back are outside the window")
         XCTAssertEqual(points.last?.label, dayLabel(2026, 6, 9), "window ends today")
     }
 
