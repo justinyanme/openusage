@@ -188,7 +188,9 @@ final class AppContainer {
                 enabledOrderedIDs: layout.orderedProviderIDs().filter { enablement.isEnabled($0) },
                 knownIDs: Set(registry.providers.map(\.id)),
                 snapshots: dataStore.snapshots,
+                localSnapshots: dataStore.localSnapshots,
                 limitDescriptors: registry.limitDescriptorsByProvider,
+                historyDescriptors: registry.historyDescriptorsByProvider,
                 errors: dataStore.providerErrors
             )
         })

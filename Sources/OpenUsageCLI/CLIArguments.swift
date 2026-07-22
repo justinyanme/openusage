@@ -1,6 +1,12 @@
 import Foundation
 
+enum CLICommand: Equatable, Sendable {
+    case limits
+    case spend
+}
+
 struct CLIArguments: Equatable, Sendable {
+    var command: CLICommand = .limits
     var providerID: String?
     var force = false
     var showHelp = false
@@ -8,6 +14,7 @@ struct CLIArguments: Equatable, Sendable {
 
     static func parse(_ arguments: [String]) throws -> CLIArguments {
         var parsed = CLIArguments()
+        var positionals: [String] = []
         for argument in arguments {
             switch argument {
             case "--force": parsed.force = true
@@ -17,12 +24,17 @@ struct CLIArguments: Equatable, Sendable {
                 if argument.hasPrefix("-") {
                     throw CLIError.usage("Unknown option: \(argument)")
                 }
-                guard parsed.providerID == nil else {
-                    throw CLIError.usage("Only one provider can be requested at a time.")
-                }
-                parsed.providerID = argument.lowercased()
+                positionals.append(argument.lowercased())
             }
         }
+        if positionals.first == "spend" {
+            parsed.command = .spend
+            positionals.removeFirst()
+        }
+        guard positionals.count <= 1 else {
+            throw CLIError.usage("Only one provider can be requested at a time.")
+        }
+        parsed.providerID = positionals.first
         return parsed
     }
 }
