@@ -117,7 +117,8 @@ enum SpendTileMapper {
             guard tokens.isFinite, tokens >= 0, let key = dayKey(fromUsageDate: day.date) else { continue }
             tokensByDay[key, default: 0] += tokens
         }
-        guard tokensByDay.values.contains(where: { $0 > 0 }) else { return [] }
+        let includedDays = UsageHistoryWindow.dayKeys(through: now)
+        guard tokensByDay.contains(where: { includedDays.contains($0.key) && $0.value > 0 }) else { return [] }
 
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: now)
