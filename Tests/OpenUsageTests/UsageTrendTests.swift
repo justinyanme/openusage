@@ -124,6 +124,18 @@ final class UsageTrendTests: XCTestCase {
         XCTAssertTrue(allZero.isEmpty, "a fully idle window has no trend to draw")
     }
 
+    func testAppendUsageTrendSkippedWhenOnlyUsageIsOutsideWindow() {
+        // With today = 6/21, the 30-day window begins 5/23. Retained usage from the newly excluded
+        // boundary day (30 days back) must not produce a flat chart containing 30 zero bars.
+        var lines: [MetricLine] = []
+        SpendTileMapper.appendUsageTrend(
+            DailyUsageSeries(daily: [DailyUsageEntry(date: "2026-05-22", totalTokens: 500, costUSD: nil)]),
+            to: &lines, now: date(2026, 6, 21), note: "n"
+        )
+
+        XCTAssertTrue(lines.isEmpty, "usage outside the window leaves the trend unbacked → No data")
+    }
+
     func testChartLineCodableRoundTrips() throws {
         let line = MetricLine.chart(
             label: "Usage Trend",
