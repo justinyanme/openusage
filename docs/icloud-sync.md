@@ -35,7 +35,9 @@ receive it, especially while offline. Downloaded changes reload immediately when
 Settings lists each valid device file with the time that Mac generated it. To remove a Mac from the
 combined summary, turn sync off on that Mac; this deletes its file from iCloud. Turning sync off also
 stops that Mac from reading peers and immediately returns every surface there to local-only spend.
-Malformed files are ignored and reported in Settings and the app log.
+Malformed files are ignored and reported in Settings and the app log. If the earlier account-schema
+rollback left a v2 file beside its newer v1 replacement from the same device, OpenUsage quietly ignores
+the superseded copy; all other valid v2 multi-account files continue to sync normally.
 
 ## Development and release setup
 

@@ -48,11 +48,17 @@ enum ICloudUsageSyncError: Error, LocalizedError {
 
 /// Coordinated access to the app-private data area of OpenUsage's iCloud Documents container.
 actor ICloudUsageHistoryFileStore: UsageHistoryFileStoring {
+    private struct FileFailure {
+        var url: URL
+        var error: any Error
+    }
+
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     private let containerIdentifier: String?
+    private let containerURLOverride: URL?
 
-    init(containerIdentifier: String? = nil) {
+    init(containerIdentifier: String? = nil, containerURLOverride: URL? = nil) {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -61,6 +67,7 @@ actor ICloudUsageHistoryFileStore: UsageHistoryFileStoring {
         decoder.dateDecodingStrategy = .iso8601
         self.decoder = decoder
         self.containerIdentifier = containerIdentifier
+        self.containerURLOverride = containerURLOverride
     }
 
     func loadDocuments() async throws -> UsageHistoryLoadResult {
@@ -76,7 +83,7 @@ actor ICloudUsageHistoryFileStore: UsageHistoryFileStoring {
         ).filter { $0.pathExtension == "json" }
 
         var documents: [UsageHistoryDocument] = []
-        var errors: [String] = []
+        var failures: [FileFailure] = []
         for url in urls {
             do {
                 let data = try coordinatedRead(url)
@@ -84,11 +91,20 @@ actor ICloudUsageHistoryFileStore: UsageHistoryFileStoring {
                 try document.validate()
                 documents.append(document)
             } catch {
-                errors.append("\(url.lastPathComponent): \(error.localizedDescription)")
-                AppLog.warn(.config, "iCloud history ignored \(url.lastPathComponent): \(error.localizedDescription)")
+                failures.append(FileFailure(url: url, error: error))
             }
         }
-        return UsageHistoryLoadResult(documents: documents, invalidFileMessages: errors)
+
+        var errors: [String] = []
+        for failure in failures {
+            let message = "\(failure.url.lastPathComponent): \(failure.error.localizedDescription)"
+            errors.append(message)
+            AppLog.warn(.config, "iCloud history ignored \(message)")
+        }
+        return UsageHistoryLoadResult(
+            documents: removingSupersededAccountDocuments(from: documents),
+            invalidFileMessages: errors
+        )
     }
 
     func write(_ document: UsageHistoryDocument) async throws {
@@ -114,7 +130,8 @@ actor ICloudUsageHistoryFileStore: UsageHistoryFileStoring {
     }
 
     private func historyDirectory(create: Bool) throws -> URL {
-        let container = FileManager.default.url(forUbiquityContainerIdentifier: containerIdentifier)
+        let container = containerURLOverride
+            ?? FileManager.default.url(forUbiquityContainerIdentifier: containerIdentifier)
             ?? fallbackContainerURL()
         guard let container else {
             throw ICloudUsageSyncError.unavailable
@@ -127,6 +144,29 @@ actor ICloudUsageHistoryFileStore: UsageHistoryFileStoring {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
         return directory
+    }
+
+    /// The account-first rollback briefly left a v2 file beside a replacement v1 file carrying the
+    /// same provider set under a new device ID. V2 is active again, so both files now validate; filter
+    /// only that exact rollback shape while keeping every other account-aware document.
+    private func removingSupersededAccountDocuments(
+        from documents: [UsageHistoryDocument]
+    ) -> [UsageHistoryDocument] {
+        documents.filter { candidate in
+            guard candidate.schema == UsageHistoryDocument.accountSchema else { return true }
+            let providerIDs = Set(candidate.providers.keys)
+            let isSuperseded = documents.contains { replacement in
+                replacement.schema == UsageHistoryDocument.currentSchema
+                    && replacement.deviceID != candidate.deviceID
+                    && replacement.deviceName == candidate.deviceName
+                    && replacement.updatedAt > candidate.updatedAt
+                    && Set(replacement.providers.keys) == providerIDs
+            }
+            if isSuperseded {
+                AppLog.info(.config, "iCloud history ignored superseded account-schema file \(candidate.deviceID).json")
+            }
+            return !isSuperseded
+        }
     }
 
     /// A separately launched helper can lack a main-bundle iCloud context even though it lives inside
