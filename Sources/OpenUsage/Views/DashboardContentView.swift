@@ -1,67 +1,59 @@
 import SwiftUI
 
-/// The dashboard-only scrolling content. Screen switching, panel sizing, fixed bars, keyboard handling,
-/// and close/reset behavior stay with `DashboardView`.
 struct DashboardContentView: View {
-    let container: AppContainer
-    let layout: LayoutStore
-    let updater: UpdaterController
+    @Environment(LayoutStore.self) private var layout
+    @Environment(PopoverState.self) private var popover
     let reorderSpaceName: String
-    let horizontalPadding: CGFloat
-    let bottomGap: CGFloat
 
     @Binding var reorderLift: ReorderLift?
     @Binding var scrollPosition: ScrollPosition
 
-    @AppStorage(DensitySetting.key) private var density = DensitySetting.regular
-    @AppStorage(TotalSpendSetting.key) private var showTotalSpend = true
+    @Environment(UpdaterController.self) private var updater
+
+    /// Half the space on each side of the content: it and the bar beside it each hold this much.
+    static let barGap: CGFloat = 7
 
     var body: some View {
         PopoverScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                // A pending update found by a scheduled Sparkle check tops everything — it's the
-                // reminder the buried Sparkle window can't deliver for a dockless app.
+                // A pending update found by a scheduled Sparkle check tops everything: it's the reminder
+                // the buried Sparkle window can't deliver for a dockless app.
                 if let updateVersion = updater.availableUpdateVersion {
                     UpdateBannerCard(version: updateVersion)
-                        .padding(.bottom, density.sectionSpacing)
-                        .transition(.scale(scale: 0.95).combined(with: .opacity))
-                }
-                // The one-time first-run hint sits above the provider sections (and above the
-                // empty-state line, which a fresh install can hit while nothing has data yet).
-                if container.onboarding.isCustomizeHintPending {
-                    CustomizeHintCard()
-                        .padding(.bottom, density.sectionSpacing)
+                        .padding(.bottom, PanelMetrics.sectionSpacing)
                         .transition(.scale(scale: 0.95).combined(with: .opacity))
                 }
                 widgetContent
             }
-            .animation(Motion.spring, value: container.onboarding.isCustomizeHintPending)
             .animation(Motion.spring, value: updater.availableUpdateVersion)
-            .padding(.horizontal, horizontalPadding)
-            .padding(.top, density.contentTopPadding)
-            .padding(.bottom, bottomGap)
+            .padding(.horizontal, PanelMetrics.margin)
+            .padding(.vertical, Self.barGap)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollPosition($scrollPosition)
+        .onChange(of: popover.dashboardTab) { scrollPosition.scrollTo(edge: .top) }
     }
 
     @ViewBuilder
     private var widgetContent: some View {
-        // The cross-provider Total Spend ring stays visible whenever the user allows it and an enabled
-        // provider can track spend, even before fresh data arrives or when every metric row is hidden.
-        if showTotalSpend, layout.hasSpendCapableProvider {
-            TotalSpendCard()
-                .padding(.bottom, density.sectionSpacing)
-        }
-        if layout.displayGroups.isEmpty {
-            EmptyDashboardView {
-                withAnimation(Motion.modeSwitch) { layout.screen = .customize }
-            }
+        if layout.registry.providers.isEmpty {
+            EmptyDashboardView { popover.isAddingAccount = true }
+        } else if layout.displayGroups.isEmpty {
+            Text("Every metric is hidden. Turn them back on in Accounts.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 22)
         } else {
-            WidgetGroupedListView(
-                reorderSpaceName: reorderSpaceName,
-                reorderLift: $reorderLift
-            )
+            switch popover.dashboardTab {
+            case .priority:
+                PriorityDashboardView()
+            case .allUsage:
+                WidgetGroupedListView(
+                    reorderSpaceName: reorderSpaceName,
+                    reorderLift: $reorderLift
+                )
+            }
         }
     }
 }

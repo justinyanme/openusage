@@ -1,23 +1,17 @@
 import Foundation
 
 struct DevinUsageClient: Sendable {
-    static let cloudService = "exa.seat_management_pb.SeatManagementService"
+    static let defaultAPIServerURL = URL(string: "https://server.codeium.com")!
+    static let apiServerURLKey = "api_server_url"
     static let cloudCompatVersion = "1.108.2"
 
     var http: any HTTPClient
 
-    init(http: any HTTPClient = URLSessionHTTPClient()) {
-        self.http = http
-    }
-
-    func fetchUserStatus(auth: DevinAuth, apiServerURL: String) async throws -> HTTPResponse {
-        guard let url = URL(string: "\(apiServerURL)/\(Self.cloudService)/GetUserStatus") else {
-            throw DevinUsageError.invalidResponse
-        }
-
+    func fetchUserStatus(_ tokens: OAuthTokens) async throws -> HTTPResponse {
+        let apiServerURL = tokens.extras[Self.apiServerURLKey].flatMap { URL(string: $0) } ?? Self.defaultAPIServerURL
         let body: [String: Any] = [
             "metadata": [
-                "apiKey": auth.apiKey,
+                "apiKey": tokens.accessToken,
                 "ideName": "devin",
                 "ideVersion": Self.cloudCompatVersion,
                 "extensionName": "devin",
@@ -25,10 +19,9 @@ struct DevinUsageClient: Sendable {
                 "locale": "en"
             ]
         ]
-
         return try await http.send(HTTPRequest(
             method: "POST",
-            url: url,
+            url: apiServerURL.appending(path: "exa.seat_management_pb.SeatManagementService/GetUserStatus"),
             headers: [
                 "Content-Type": "application/json",
                 "Connect-Protocol-Version": "1"
@@ -37,5 +30,4 @@ struct DevinUsageClient: Sendable {
             timeout: 15
         ))
     }
-
 }

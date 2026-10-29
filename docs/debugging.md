@@ -1,82 +1,64 @@
-# Debugging and Capturing Logs
-
-How to run a local build and watch what the app is doing — useful when a provider misbehaves or you're
-chasing a startup or refresh problem.
+# Debugging
 
 ## Run a local build
 
-The project script owns the build/run loop. From the repo root:
-
 ```sh
-./script/build_and_run.sh          # build and launch the dev app from dist/
-./script/build_and_run.sh build    # build and stage only, don't launch
-./script/build_and_run.sh verify   # launch and confirm the process is running
+./script/build_and_run.sh verify   # build, sign, launch, and confirm it runs
+./script/build_and_run.sh logs     # launch and stream its log lines
 ```
 
-The script builds a signed app bundle under `dist/` and launches it in place — nothing is installed to
-`/Applications`. The dev build uses its own bundle id (`com.robinebers.openusage.dev`), so it keeps its
-own settings and keychain and never disturbs a released OpenUsage. It ships no update feed, so it never
-checks for updates — test updates with a real signed, notarized release build.
+- The dev bundle id is `com.robinebers.openusage.dev`. It keeps its own settings and Keychain items
+  and runs beside an installed OpenUsage.
+- It has no update feed, so the Updates controls are disabled. It leaves alone the OpenRouter and Z.ai
+  keys 0.7.x saved.
+- Only one dev build runs at a time. If one from another folder is running, `run` and `verify` fail
+  and print its path.
 
-## Stream logs
+## Sample Data (Development Only)
 
-To watch the app's logs live while you reproduce an issue:
+The local build script stages `dist/OpenUsage.app` and `dist/OpenUsage Demo.app`. In the normal dev
+app, turn on **Settings → Advanced → Development → Sample Data**. The switch restarts in the isolated
+demo app. Turn it off to restart the normal dev app with its existing accounts and settings.
+
+- Each launch draws a random seed, shown beside **Demo Data** in the footer. The seed picks every
+  provider's account count and names, which limits show, their usage, and their resets.
+- Every seed shows at least one Warning, Critical, Burning Fast, Used Up, empty balance, Use It or
+  Lose It, and account notice. Resets fall between the next hour and the next week.
+- **Reshuffle**, under Development in the demo app, swaps in a new seed's accounts without a restart.
+- To reproduce a seed, launch the demo with it:
+  `open "dist/OpenUsage Demo.app" --args -DemoSeed 4242`.
+- The demo uses `com.robinebers.openusage.dev.demo` and memory-only credential vaults. Its accounts,
+  layout, and settings reset at each launch. It never reads or changes the normal dev app's or the
+  installed app's accounts, settings, or Keychain items.
+- Usage reads and hub calls are blocked, and telemetry is off. Add Account still runs the provider's
+  real sign-in; the new account then shows sample usage.
+- The script passes `OPENUSAGE_DEVELOPMENT` only for local development identities. Releases and the
+  downloaded Test Build DMGs do not include Sample Data, and CI checks that release binaries don't.
+
+## Read the logs
+
+OpenUsage logs through unified logging under the subsystem `OpenUsage`, with categories such as
+`refresh`, `http`, `auth`, `updates`, and `config`.
 
 ```sh
-./script/build_and_run.sh logs
+log stream --info --predicate 'subsystem == "OpenUsage"'
+log stream --info --predicate 'subsystem == "OpenUsage" AND category == "refresh"'
+log show --last 2h --predicate 'subsystem == "OpenUsage" AND category == "refresh"'
 ```
 
-This launches the dev app and then streams its unified logs. Under the hood it filters the system log to
-the app's process, equivalent to:
+- macOS keeps info lines in memory only, so `log show` finds them for a few minutes at most. Each
+  refresh pass's `batch start` and `batch end` lines go to disk, so the last command lists every pass.
+- **Settings → Advanced → Log Level** sets how much is written: Info (the default), Debug (read with
+  `--debug`), Warning, or Error.
+- Logs never hold a URL's query, a header, or a response body. Tokens, keys, and home paths are masked.
+
+## Tests
 
 ```sh
-log stream --info --style compact --predicate 'process == "OpenUsage"'
+script/test_quiet.sh
+script/test_quiet.sh --filter CursorTokenRefreshTests
+script/test_quiet.sh -Xswiftc -DOPENUSAGE_DEVELOPMENT --filter 'DevelopmentDemoTests|DevelopmentDataModeTests'
 ```
 
-To read logs *after the fact* instead of live, use `log show` with a time window:
-
-```sh
-log show --last 10m --info --predicate 'process == "OpenUsage"'
-```
-
-## Log file
-
-In addition to the unified log above, the app writes a file log to
-`~/Library/Logs/OpenUsage/OpenUsage.log` — this is what to send with a support report. It is capped at
-~10 MB with one `.1` archive. Raise the detail in **Settings -> Advanced -> Log Level** (use **Debug**
-for full detail), then grab the file with **Copy Log Path** or **Reveal in Finder** in that same
-section. See [Logging](logging.md) for the levels, subsystem tags, and the never-log-secrets guarantee.
-
-## Account log lines
-
-The launch-time account pass (which account is signed in at the Claude/Codex default home) leaves a
-short trail in the log file. Its filesystem and Keychain reads run in parallel off the main actor;
-account reconciliation stays on the main actor. Adapted from Runway (mstallone/runway) #48, MIT.
-
-- `account assembly duration: <n> ms` — elapsed time for launch-time account discovery and assembly.
-- `launch to status item ready: <n> ms` — elapsed time from app process start to status-item initialization.
-- `accounts: claude default identity resolved (claude@<hash>)` — the default login named its account.
-  The hash is derived from the account id, so two launches by the same account always match.
-- `accounts: codex default identity unresolved — …` — a login exists but its account can't be named
-  with certainty this launch (an auth file without an account id, or a keychain credential whose
-  secret we don't read at launch). The card works as before; it just can't participate in
-  account-aware features yet.
-- `stale account cache discarded for claude` — the account at the default home changed between
-  launches, so the previous account's cached snapshot was dropped instead of painting under the new
-  login.
-- `account identity read skipped for claude, codex: login shell cold and no shell-environment
-  snapshot exists yet` — a first launch raced a slow login shell, so the named families were left
-  unread this launch; every later launch has a persisted snapshot to fall back on.
-
-## Tips
-
-- **A provider shows an error.** Reproduce with `logs` running, then check that provider's page in
-  `docs/providers/` for what its error states mean and where it reads credentials from.
-- **Nothing updates.** Refresh runs on a timer and respects the cache; see
-  [Refreshing & caching](refreshing.md) for when a network call actually happens. Use the per-provider
-  "Refresh" in the row's context menu to force one.
-- **Permissions / keychain prompts on every rebuild.** The script signs with a stable Apple Development
-  identity so the permission ACLs stick. If you see repeated prompts, make sure such an identity exists in
-  your keychain (the script warns when it falls back to ad-hoc signing).
-- **Inspect the local API.** With the app running, `curl 127.0.0.1:6736/v1/usage` shows the same usage
-  snapshots the UI uses — handy to confirm whether a problem is in fetching/mapping or in the UI.
+The script runs the suite niced, keeps it from taking the keyboard or the screen, and fails the run if
+a test process came to the front.

@@ -1,65 +1,71 @@
-# Refreshing & Caching
+# Refreshing
+
+OpenUsage refreshes every account every 5 minutes. There is no setting for the interval.
 
 ## When data updates
 
-- All enabled providers refresh together: once at launch, then every 5 minutes (a fixed cadence — there's no setting for it). Opening the popover does not start a second automatic pass. Providers fetch in parallel, so fast cards update without waiting for a slow one; close-together results are briefly grouped so a burst shows as one update and is saved once (adapted from Runway (mstallone/runway) #47, MIT). The batch itself still finishes only after every provider returns; notifications, history sync, and the next five-minute wait begin after that point.
-- Turning a provider on (yourself in Customize, or automatically by first-launch/new-provider detection) fetches it promptly instead of waiting out the interval — even when the change lands in the middle of a refresh that's already running.
-- The Dashboard and Settings footer shows `Next update in Nm`. **Clicking it (or pressing ⌘R while that footer is present)** refreshes immediately, skipping the cache.
-- The one-shot `openusage` command reuses this same persisted cache for five minutes, refreshes missing or stale entries without starting the app, and exits. `openusage --force` runs the same forced provider refresh as ⌘R regardless of cache age.
-- While a provider is fetching, a small spinner appears next to its name (and one shows in the footer beside the countdown), so you can tell a refresh is in flight rather than wondering if the numbers are stale.
-- With [iCloud Sync](icloud-sync.md) on, a refresh batch writes one machine-history file after the whole
-  batch finishes. Manual provider refreshes write after that provider finishes, and adjacent changes are
-  debounced into one write.
+| Trigger | What refreshes |
+| --- | --- |
+| Launch | Accounts whose saved values are 5 minutes old or more |
+| Every 5 minutes | Every account. A pass missed during sleep runs on wake |
+| Adding an account | That account |
+| **⌘R**, or clicking **Next update in …** | Every account, skipping the cache and the wait after a failure |
+| An account's **Refresh** menu item | Its accounts, like ⌘R |
+| Claiming a rate-limit reset | That account |
+| Launch, opening Accounts, and hourly | Each [CLIProxyAPI hub](cliproxyapi.md#staying-in-sync)'s login list |
+| Replacing a hub's management key | Every account from that hub |
+
+A wait a provider asked for (HTTP 429) holds even for ⌘R. Accounts fetch in parallel.
 
 ## Caching
 
-Snapshots are cached on disk and load instantly at launch, so you see your last-known values immediately instead of placeholders — even before the first fetch finishes.
+Usage is read on every refresh. These reads happen at most once an hour, and on ⌘R:
 
-Claude and Codex cache entries also remember which account produced them. If you swap the account
-signed in at the provider's default home between launches, the previous account's cached values are
-discarded at the next launch (the card starts empty and fills on its first fetch) instead of briefly
-showing the old account's limits and plan under the new login.
+- The plan name, and Cursor's membership.
+- ChatGPT's reset credits. The count still updates every refresh.
+- Claude's reset grants. ⌘R rereads them only after 15 minutes.
 
-A cached value only counts as *fresh* (skip-a-refresh fresh) when it was fetched **during the current running session**. So a value cached in an earlier session always re-fetches on the first pass after launch — you still see it instantly, but the app never waits out the old interval before getting live numbers. This matters after an update: a new app version refreshes right away instead of showing the previous version's data until its interval lapses. Within a session, a freshly fetched value then counts as fresh for one refresh interval before the next pass re-fetches it.
+Usage history:
 
-Claude, Codex, and pi spend history has a separate local-log parse cache under
-`~/Library/Application Support/OpenUsage/log-scan-cache/`. It stores parsed usage events before OpenUsage
-applies model-rate estimates, so pricing updates take effect without re-reading unchanged JSONL. On
-relaunch, an entry is reused only when its path, size, modification time, and parser version still match.
-When a supported JSONL file only grows, the scanner resumes from the last complete line and reads only
-the appended bytes. A changed prefix, truncated file, incomplete appended line, or unusable parser state
-falls back to a full streamed parse instead of dropping that record. Same-home cards share parsed data,
-and changing one source file rewrites only that file's record. Old files leave the cache as the history
-window advances, and identities unused for 35 days are removed. App writes are debounced until after
-refresh; the one-shot CLI drains pending writes before it exits.
+- [Cursor](providers.md#cursor) reads today and yesterday every refresh, and each older day until
+  one read of it succeeds.
+- [Ollama](providers.md#ollama) and [ChatGPT](providers.md#chatgpt) read it hourly, at the start
+  of a UTC day, and on ⌘R.
 
-The append-only scanner is adapted from Runway (mstallone/runway, MIT). The Codex line scan checks
-event markers in one pass, also adapted from Runway #45.
+The last values are saved on disk and shown at launch. They stay fresh for 5 minutes, across a
+relaunch too.
 
 ## When a fetch fails
 
-A failed refresh **never wipes your data**: the last good values stay on screen, and a small warning triangle appears next to the provider's name — hover it for the error message (e.g. "Not logged in"). The error clears on the next successful refresh.
+A failed refresh keeps the last good values. The account shows under **Needs Attention** in
+Priority, and **Fix** opens its page with the reason. The next successful refresh clears the error.
 
-A provider that stops responding altogether is given up on after two minutes. Its spinner stops, the
-warning triangle reads "Refresh timed out after 120s", and it is tried again on a later pass — so one
-stuck provider can't leave a spinner turning for the rest of the session. The wait is deliberately long:
-a healthy provider on a slow network can legitimately take over a minute, and it should be reported as
-slow, not as broken.
+An account that failed waits before the next try:
 
-The last good normalized history is preserved too, so a temporary provider failure—or a successful
-limit refresh whose local log scan is temporarily unavailable—does not remove this Mac's previous
-contribution from an iCloud-combined spend total.
+- 5 minutes, doubling with each failure in a row, up to an hour.
+- One request an hour if its key or sign-in keeps being refused.
+- No extra wait if it never reached the provider, such as with no internet.
+- A manual refresh skips the wait.
 
-Rows that have never had data show "No data" rather than made-up numbers.
+When a provider rate-limits OpenUsage (HTTP 429, or GitHub's HTTP 403), the account waits as long as
+`Retry-After` asks, up to an hour, or on the doubling schedule. Claude's wait covers every card
+signed in to the same Anthropic login, and survives a relaunch.
 
-## Keychain access
+An account that doesn't answer within two minutes shows "Refresh timed out after 120s" and is tried
+again on a later pass.
 
-Some logins live in your macOS Keychain, and macOS asks before OpenUsage can read them.
+Values more than two refresh cycles old get a clock next to the account's name, and the
+[`openusage` command](cli.md) marks them `"stale": true`.
 
-- Choose **Always Allow** so later refreshes stay quiet.
-- Each login shows one request at a time, and OpenUsage waits for your answer.
-- If you choose **Deny**, OpenUsage stops asking for that login until you refresh manually.
+## Expired sign-ins
 
-## Stale data
+OAuth accounts renew their sign-in 5 minutes before it expires. Cursor renews in the last 7 days of
+its 60-day token. If Claude, ChatGPT, Grok, or Antigravity refuses the token anyway (HTTP 401),
+OpenUsage renews once and retries.
 
-Because a failed refresh keeps the last good values on screen, those values can persist if refreshes keep failing — so a plan or limit that changed on the provider's side could otherwise keep showing the old figures indefinitely. To make that obvious, a small **"Outdated"** tag appears next to the provider's name once its data is more than a couple of refresh cycles old (about ten minutes); hover it for the precise age ("Last updated 3h ago"). The tag stays short so it never crowds a long plan name. When you see it, the numbers below are from that earlier time, not live — usually because the provider is failing to refresh (check the warning triangle) or the Mac was asleep. A successful refresh clears it.
+If the provider still refuses the token or refuses the renewal, the warning says the sign-in
+expired. Use **Sign In Again…** on the account's page.
+
+Other renewal failures, such as an outage, a rate limit, or no connection, don't mean the sign-in
+expired. The account keeps its current token while it works and retries the renewal on the next
+pass. Once the token expires, the refresh fails like any [failed fetch](#when-a-fetch-fails).

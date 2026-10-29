@@ -51,6 +51,8 @@ Wait for explicit approval of the changelog before changing any files. Accept ed
 
 Prepend the approved section right after the `# Changelog` header. Commit on `main`:
 
+Name the section exactly `## v{version}` and commit it before tagging: `release.yml` embeds it as the notes in Sparkle's update window and fails the release when it is missing or empty. The Test Build uses `## v{base_version}`, or `## Unreleased` until that exists.
+
 ```sh
 git switch main && git pull
 git add CHANGELOG.md && git commit -m "docs: changelog for v{version}"
@@ -85,7 +87,7 @@ git fetch origin gh-pages && git show origin/gh-pages:appcast.xml | grep -F "Ope
 curl -s "https://robinebers.github.io/openusage/appcast.xml" | grep -F "OpenUsage-{version}.dmg"
 ```
 
-The second check matters: publishing is two hops — Release (or pricing-supplement) pushes `appcast.xml` to the **`gh-pages` branch**, then **`.github/workflows/deploy-pages.yml` on `main`** deploys that branch to the live site (Pages source is "GitHub Actions", not legacy branch deploy). Auto deploy runs on `workflow_run` after Release completes; GitHub sometimes returns **"Deployment failed, try again later"** even though `gh-pages` is already correct. If the branch has the version but the live URL does not after ~10 minutes, check `gh run list --workflow=deploy-pages.yml` and re-run **`gh workflow run deploy-pages.yml --ref main`** (must use `main` — the workflow file is not on `gh-pages`). Sparkle clients only see the live URL.
+The second check matters: publishing is two hops — Release pushes `appcast.xml` to the **`gh-pages` branch**, then **`.github/workflows/deploy-pages.yml` on `main`** deploys that branch to the live site (Pages source is "GitHub Actions", not legacy branch deploy). Auto deploy runs on `workflow_run` after Release completes; GitHub sometimes returns **"Deployment failed, try again later"** even though `gh-pages` is already correct. If the branch has the version but the live URL does not after ~10 minutes, check `gh run list --workflow=deploy-pages.yml` and re-run **`gh workflow run deploy-pages.yml --ref main`** (must use `main` — the workflow file is not on `gh-pages`). Sparkle clients only see the live URL.
 
 Require `isDraft=false`, `isPrerelease=true` for beta or `false` for stable, an `OpenUsage-<version>.dmg` asset, `bodyLen>0`, and the version present in the appcast. If a draft was left behind, migrate its notes/assets onto the published release, then delete it — but only once a separate PUBLISHED release for the tag already exists:
 
@@ -99,6 +101,13 @@ else
   echo "No published release for $tag yet - publish it first; do NOT delete the draft."
 fi
 ```
+
+## Test build (no release)
+
+`.github/workflows/test-build.yml` builds the same signed, notarized DMG from any branch or commit without a tag, a release, or a feed update, so nobody is offered it. Run `gh workflow run test-build.yml --ref main -f ref=<branch-or-sha>`. It versions the build `<base_version>-test.<shortsha>` (default base `0.8.0-beta.1`) and uploads two artifacts: the DMG and a test `appcast.xml` that lists only that DMG at `http://localhost:8000/`.
+
+- **Install test:** open the DMG and drag OpenUsage over the installed copy.
+- **In-app update test:** put both artifacts in one folder, run `python3 -m http.server 8000` there, run `defaults write com.robinebers.openusage SUFeedURL http://localhost:8000/appcast.xml`, restart OpenUsage, and click **Check for Updates…**. Sparkle reads that user default before the built-in feed. Afterwards run `defaults delete com.robinebers.openusage SUFeedURL`, or the app keeps checking the test feed.
 
 ## Changelog template
 

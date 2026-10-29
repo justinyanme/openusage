@@ -9,7 +9,6 @@ set -euo pipefail
 #
 # Required env:
 #   CODESIGN_IDENTITY     Developer ID Application identity (name or hash)
-#   ICLOUD_PROVISIONING_PROFILE  Developer ID provisioning profile with the production iCloud container
 #   SPARKLE_PUBLIC_KEY    base64 EdDSA public key -> baked into Info.plist (SUPublicEDKey). generate_appcast
 #                         only signs the DMG if this matches the private key it signs with.
 #   OPENUSAGE_VERSION     human version, e.g. 0.7.0 (CFBundleShortVersionString)
@@ -25,7 +24,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 : "${CODESIGN_IDENTITY:?set CODESIGN_IDENTITY to your Developer ID Application identity}"
-: "${ICLOUD_PROVISIONING_PROFILE:?set ICLOUD_PROVISIONING_PROFILE to the iCloud provisioning profile path}"
 : "${SPARKLE_PUBLIC_KEY:?set SPARKLE_PUBLIC_KEY to your base64 EdDSA public key}"
 : "${OPENUSAGE_VERSION:?set OPENUSAGE_VERSION, e.g. 0.7.0}"
 
@@ -55,8 +53,6 @@ DMG_PATH="$DIST_DIR/$DMG_NAME"
 # `dsym upload --directory` and Sparkle both want a directory of bundles, not a single path.
 DSYM_DIR="$DIST_DIR/dSYMs"
 APP_DSYM="$DSYM_DIR/$APP_NAME.app.dSYM"
-ENTITLEMENTS_TEMPLATE="$ROOT_DIR/script/OpenUsage.release.entitlements.plist"
-ENTITLEMENTS="$DIST_DIR/OpenUsage.release.resolved.entitlements.plist"
 
 # Decide notarization up front. CI always supplies the notarization login; a local dry run can
 # opt out with ALLOW_UNNOTARIZED=1 (the build will then be Gatekeeper-blocked on other Macs). Missing
@@ -99,6 +95,8 @@ cp "$BUILD_BINARY" "$APP_BINARY"
 cp "$BUILD_CLI_BINARY" "$CLI_BINARY"
 chmod +x "$APP_BINARY"
 chmod +x "$CLI_BINARY"
+# The shared module links Sparkle even though the one-shot CLI never initializes the updater. Helpers
+# sit one directory below Contents, so give dyld the same embedded-framework location as the app binary.
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$CLI_BINARY"
 # Fail loudly if the build ever silently regresses to a single arch (e.g. a dropped --arch flag): a
 # fat binary is the whole point, and generate_appcast derives Sparkle's hardwareRequirements from it.
@@ -184,36 +182,30 @@ cat >"$APP_CONTENTS/Info.plist" <<PLIST
   <key>SUPublicEDKey</key><string>$SPARKLE_PUBLIC_KEY</string>
   <key>SUEnableAutomaticChecks</key><true/>
   <key>SUScheduledCheckInterval</key><integer>3600</integer>
-  <key>NSUbiquitousContainers</key>
+  <key>NSAppTransportSecurity</key>
   <dict>
-    <key>iCloud.com.robinebers.openusage</key>
+    <key>NSExceptionDomains</key>
     <dict>
-      <key>NSUbiquitousContainerIsDocumentScopePublic</key><false/>
-      <key>NSUbiquitousContainerName</key><string>OpenUsage</string>
-      <key>NSUbiquitousContainerSupportedFolderLevels</key><string>None</string>
+      <key>ts.net</key>
+      <dict>
+        <key>NSIncludesSubdomains</key><true/>
+        <key>NSExceptionAllowsInsecureHTTPLoads</key><true/>
+      </dict>
     </dict>
   </dict>
 </dict>
 </plist>
 PLIST
 
-cp "$ICLOUD_PROVISIONING_PROFILE" "$APP_CONTENTS/embedded.provisionprofile"
-"$ROOT_DIR/script/render_icloud_entitlements.sh" \
-  "$ENTITLEMENTS_TEMPLATE" "$ICLOUD_PROVISIONING_PROFILE" "$ENTITLEMENTS" \
-  "iCloud.com.robinebers.openusage"
-
 # Embed + sign Sparkle (Developer ID, hardened runtime, secure timestamp).
 "$ROOT_DIR/script/embed_sparkle.sh" "$APP_BUNDLE" "$APP_BINARY" "$CODESIGN_IDENTITY" "--options runtime --timestamp"
-codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" \
-  --sign "$CODESIGN_IDENTITY" "$CLI_BINARY"
 
 echo "==> signing app (Developer ID, hardened runtime)"
-# Not --deep: the Sparkle framework is signed above and must keep that signature.
-codesign --force --options runtime --timestamp --entitlements "$ENTITLEMENTS" \
-  --sign "$CODESIGN_IDENTITY" "$APP_BUNDLE"
+codesign --force --options runtime --timestamp --sign "$CODESIGN_IDENTITY" "$CLI_BINARY"
+# Not --deep: the Sparkle framework is signed above and must keep that signature. No get-task-allow
+# entitlement (that debug flag would fail notarization); a non-sandboxed app needs no entitlements.
+codesign --force --options runtime --timestamp --sign "$CODESIGN_IDENTITY" "$APP_BUNDLE"
 codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
-codesign -d --entitlements :- "$APP_BUNDLE" 2>&1 | grep -q "iCloud.com.robinebers.openusage" \
-  || { echo "signed app is missing the production iCloud entitlement" >&2; exit 1; }
 
 # Notarize + staple the app itself (not just the DMG) so it launches cleanly even offline after a
 # Sparkle update extracts it from the disk image.

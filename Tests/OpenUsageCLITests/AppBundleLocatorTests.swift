@@ -12,12 +12,7 @@ final class AppBundleLocatorTests: XCTestCase {
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         let plist: [String: Any] = [
             "CFBundleIdentifier": "com.example.openusage",
-            "CFBundleShortVersionString": "1.2.3",
-            "NSUbiquitousContainers": [
-                "iCloud.com.example.openusage": [
-                    "NSUbiquitousContainerName": "OpenUsage"
-                ]
-            ]
+            "CFBundleShortVersionString": "1.2.3"
         ]
         let plistData = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
         try plistData.write(to: contents.appendingPathComponent("Info.plist"))
@@ -27,23 +22,18 @@ final class AppBundleLocatorTests: XCTestCase {
         try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: helper)
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let located = AppBundleLocator.locate(
-            executableURL: symlink,
-            environment: [:]
-        )
+        let located = AppBundleLocator.locate(executableURL: symlink)
 
         XCTAssertEqual(located.bundleIdentifier, "com.example.openusage")
         XCTAssertEqual(located.version, "1.2.3")
-        XCTAssertEqual(located.iCloudContainerIdentifier, "iCloud.com.example.openusage")
     }
 
-    func testEnvironmentCanSelectDefaultsSuiteForDevelopment() {
+    func testBareExecutableFallsBackToTheReleaseBundle() {
         let located = AppBundleLocator.locate(
-            executableURL: URL(fileURLWithPath: "/tmp/openusage"),
-            environment: ["OPENUSAGE_DEFAULTS_SUITE": "com.example.dev"]
+            executableURL: FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString)/openusage")
         )
 
-        XCTAssertEqual(located.bundleIdentifier, "com.example.dev")
-        XCTAssertNil(located.iCloudContainerIdentifier)
+        XCTAssertEqual(located.bundleIdentifier, "com.robinebers.openusage")
+        XCTAssertNil(located.version)
     }
 }

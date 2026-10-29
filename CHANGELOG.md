@@ -1,5 +1,325 @@
 # Changelog
 
+## v0.8.0-beta.4
+
+### Changed
+- **Always Show In Menu Bar** under **Settings → Display → Priority** lists everything Priority does
+  in the menu bar, in its order: Pinned, Running Out, Use It or Lose It, then Used Up. Off by default.
+  **Show In Menu Bar** is now **Max Items In Menu Bar**
+  ([#1611](https://github.com/robinebers/openusage/issues/1611)).
+- Screen and account page slides run at the Mac's native 0.25 s pace, and switching between
+  Priority and All Usage shows the new tab at once
+  ([#1574](https://github.com/robinebers/openusage/issues/1574#issuecomment-6652210093)).
+- **Hide From Screen Share** is now **Privacy Mode**, and also blurs account names in the panel while
+  your screen is shared or recorded. While it's on, copied usage pictures blur every account name
+  ([#1599](https://github.com/robinebers/openusage/pull/1599)).
+
+### Fixed
+- On macOS 26, rows scrolled under the panel's footer are frosted, as on macOS 15, so the footer
+  stays readable ([#1619](https://github.com/robinebers/openusage/issues/1619)).
+- A reset a few days out shows its minutes in clock mode, like `mié, 8:31`, so in a 24-hour
+  locale its hour no longer reads like a day of the month
+  ([#1613](https://github.com/robinebers/openusage/issues/1613)).
+
+## v0.8.0-beta.3
+
+### Added
+- **Use It or Lose It** under **Settings → Display → Priority** lists a weekly or monthly limit that
+  resets within 24 hours with over 50% left in its own Priority section, soonest reset first, with
+  when it resets. It uses the same rule as the alert and stays out of the menu bar. On by default.
+- Copilot signs in on your company's GitHub Enterprise domain on GHE.com: leave the new Domain step
+  blank for github.com, or enter an address like `octocorp.ghe.com`
+  ([#1602](https://github.com/robinebers/openusage/issues/1602)).
+- **Pace marks** are back, answering the pace marks request in
+  [#1574](https://github.com/robinebers/openusage/issues/1574#issuecomment-6634518518): with
+  **Settings → Display → Pace Marks** on, a tick on each All Usage bar and Priority ring shows where
+  usage would be at an even pace through the window. Off by default.
+
+### Changed
+- **Settings → Display** puts Priority Icons and Priority Limits under one **Priority** heading.
+- Settings explains each setting in an ⓘ tooltip beside its name instead of a second line, and the
+  Warning and Critical alerts now read "Alert when a limit requires your attention" and "Alert when
+  a limit drops critically low".
+- Priority always lists **Used Up** last.
+- The panel footer shows the OpenUsage version again, over **Next update in …**, as in 0.7.
+- The usage history popover's empty message wraps onto lines of even width.
+- All Usage shows a provider's copy button beside its logo while the pointer is anywhere over its
+  card, instead of in place of the logo.
+
+## v0.8.0-beta.2
+
+### Added
+- Z.ai accounts show a **Limit Resets** row for banked resets. Its details list Session and Weekly
+  resets apart, earliest first, and **Use** spends the earliest of a window
+  ([#1427](https://github.com/robinebers/openusage/issues/1427)).
+- Muse Code provider: sign in with a Meta device code to see your subscription's Session and Weekly
+  limits.
+- **Settings → Display → Priority Limits** sets how much left turns a limit Warning (orange) or
+  Critical (red), for the colors, Running Out, the menu bar, and the alerts. The alerts are now named
+  Warning and Critical.
+- **Burning Fast** under Priority Limits lists a limit that would run out before it resets at your
+  current pace, however much it has left, under Running Out and in the menu bar, with when it would
+  run out ([#1574](https://github.com/robinebers/openusage/issues/1574)). On by default.
+- **Use It or Lose It** notification: a weekly or monthly limit resets within 24 hours with over 50%
+  left ([#1593](https://github.com/robinebers/openusage/issues/1593)). Off by default.
+
+### Changed
+- Priority: a pinned limit or balance that's used up moves to **Used Up** until it resets, instead of
+  staying under **Pinned** as an empty ring.
+- **Settings → General → Global Shortcut** uses the standard macOS shortcut recorder, and a usage
+  range with no data shows the provider's mark gently pulsing instead of breathing rings.
+
+### Fixed
+- Claude's Extra Usage shows the account's billing currency, such as €, instead of always $
+  ([#1425](https://github.com/robinebers/openusage/issues/1425)).
+- Cursor: Extra Usage reads "Team Spend" when its limit is the team's shared pool, so it no longer
+  looks like a personal cap. Personal limits still read Extra Usage.
+- Claude: Extra Usage reads "Spend" on an Enterprise plan, where it is the whole monthly bill
+  ([#1260](https://github.com/robinebers/openusage/issues/1260)).
+
+## v0.8.0-beta.1
+
+**Upgrading from 0.7.x:** add your accounts again from the **Accounts** screen. OpenUsage no longer
+picks up the sign-ins of the coding tools on your Mac, so most accounts don't carry over. The
+OpenRouter and Z.ai keys you saved in 0.7.x are added for you, unless you had turned that provider off.
+
+The new OpenUsage announced in [#1441](https://github.com/robinebers/openusage/issues/1441). The app
+shows only what each provider's API reports for the accounts you sign in to.
+
+### Removed
+- Account discovery. OpenUsage no longer reads other tools' credentials, config files, Keychain items,
+  databases, or logs. Sign in to each account from the new **Accounts** screen instead.
+- Spend and token estimates from local logs, model pricing, and the pricing supplement. The dashboard
+  shows the limits and dollar values a provider reports, nothing computed apart from ChatGPT's credit
+  value (below).
+- iCloud sync of usage history (daily tokens and spend).
+- The log file. The app logs through unified logging only
+  (`log stream --predicate 'subsystem == "OpenUsage"'`).
+- The local HTTP API.
+- The Pi provider, which has no account sign-in.
+- The welcome screen, provider enable/disable switches, and the On Demand metric tier.
+- Menu-bar stars. The menu bar picks its own limits.
+- The Density setting and Reset All Customization.
+- OpenRouter's Credits bar, which measured spend against every credit ever bought, not a limit.
+  Balance still shows what's left.
+- The Icon Style, Increase Transparency, Always Show Pacing, and Reduce Animations settings.
+  Animations follow macOS's Reduce Motion setting.
+
+### Changed
+- Dashboard: Today, Yesterday, and every other time range always show, at 0 when the provider reports
+  nothing for them. An account's page still hides any of them with its switch.
+- Dashboard: balances always show, even at $0, including Cursor Credits when Cursor reports none. Extra
+  Usage shows only while the provider has it on, even at $0, and hides while it is off: Claude,
+  ChatGPT, Cursor, Copilot, and Grok, whose "Disabled" row is gone.
+- Share: every share image ends with a tinted OpenUsage footer reading "Your AI Limits at a Glance",
+  in place of the "Monitor Your AI Subscriptions with OpenUsage" line.
+- Panel: content scrolls cleanly under the top bar, with no glass backdrop, and blurs softly under the
+  bottom bar only while something is under it. The account name in an account page's header fades its
+  hover highlight in.
+- Z.ai: a key Z.ai refuses reads as rejected, not as an invalid response, so the 0.7.x key import
+  stops checking it on every launch.
+- Dashboard: after an update from 0.7.x, the empty dashboard welcomes you back, says OpenUsage no longer
+  reads your local accounts automatically, and asks you to add back the ones to track.
+- Accounts: add several accounts per provider, rename them, and remove them from the app.
+- Accounts: replace an API-key account's key from its page. A key, added or replaced, is saved only
+  once a usage read accepts it.
+- Accounts: an account's page lists its metrics, each with a switch that hides it everywhere and a
+  handle that drags it into order.
+- Accounts: once **Sign In Again** works, the sign-in closes and the panel opens on your Default Tab.
+- Accounts: **Sign In Again** shows on an account's page only while Priority lists it under Needs Attention.
+- Dashboard: cards per provider with a section per account. Drag to reorder and press ⌘Z to undo;
+  right-click menus hold refresh, share screenshot, and quick links.
+- Dashboard: two tabs, **Priority** for the limits running out or used up, most urgent first, and
+  **All Usage** for every account. The panel opens on the **Default Tab** in Settings, Priority at first.
+- Priority: pin a metric with the pin beside its switch on its account's page, and it gets a **Pinned**
+  section at the top of Priority. While a pinned metric is running out, it shows under **Running Out**
+  instead, never in both.
+- Priority: right-click a metric on All Usage or a row on Priority to **Pin** or **Unpin** it, and
+  **All Clear** is always one row under the **Running Out** header.
+- Dashboard: an account that hasn't reported yet shows grey placeholder rows on Priority and All Usage
+  instead of **Waiting for Usage**, even while other accounts have reported.
+- Priority: an account lists under **Needs Attention** only once a refresh fails, not while it loads
+  on launch.
+- Menu bar: shows the limits closest to running out on its own. **Show In Menu Bar**, under Settings →
+  Display → Priority Icons at the top of the tab, sets how many, from App Icon Only to Up to 5. It starts
+  at Up to 3.
+- Menu bar: when an update is available, the app icon shows at the far right with a dot, after the
+  limits and any `+7` count, whatever **Show In Menu Bar** is set to.
+- Notifications: Cutting It Close now fires when a limit drops under 30% left, not when its pace nears
+  the limit. A switch you turned on in 0.7.x stays on.
+- Settings: **Log Level** is back under Advanced → Debug and keeps the level you chose in 0.7.x. It
+  starts at Info and sets how much the app writes to the macOS log; Debug works in released builds too.
+- Severity colours are blue, orange, and red.
+- Codex accounts are shown as ChatGPT. The provider id the command line takes stays `codex`.
+- Breaking from 0.7.x: the `openusage` JSON keys `providers` by account id (`codex@1a2b3c4d`), not
+  by provider (`.providers.codex`); `openusage codex | jq '.providers[]'` reads every ChatGPT account.
+  `displayName` names the account the way the app does (`ChatGPT · Work`).
+  `schema` is now `openusage.limits.v2`, so a script can tell this shape from 0.7.x's `v1`.
+  The `errors` key is gone: the command no longer refreshes, and an account shows `"stale": true` once
+  its last fetch is past `expiresAt`.
+  `expiresAt`, the moment an account turns stale, is 10 minutes after `fetchedAt` instead of 5, when
+  the app shows its clock next to the account.
+  Exit code `4` now means nothing has been fetched yet for the named accounts, not that a refresh failed.
+  ChatGPT's `creditValue` resource is gone; `credits` still reports the credit count.
+  Copilot's `orgCredits` and `orgSpend` moved to an organization account; a personal account no
+  longer reports them.
+- New app icon.
+- Claude: when Anthropic rate-limits a login, every card on it waits out the limit, across a relaunch
+  too, and cards signed in to one login share one usage request.
+- A provider's `Retry-After` wait is honored up to an hour; a longer one is cut to an hour.
+- A provider number too large for the app, such as a window length, count, or credit balance, no
+  longer crashes it: the value is treated as malformed. A reset that far off shows the longest countdown.
+- Sign-ins: an outage, a rate limit, or a lost connection while renewing a sign-in no longer reads as
+  an expired sign-in. The refresh is tried again later, and a token that still works stays in use.
+- Sign-ins: a renewed sign-in the Keychain refuses to save stays in use and is saved on the next
+  refresh, so the account no longer has to be added again.
+- OpenRouter: a Management key shows Balance and what the standard keys in your default
+  workspace spent today, this week, and this month. A standard key shows its own spend and Key Limit.
+- OpenRouter: a Management key scoped to one workspace can be added. It shows that workspace's spend,
+  without Balance, which OpenRouter keeps from workspace keys.
+- OpenRouter: a Management key adds Yesterday and Prior 30 Days from OpenRouter's activity. Resting
+  the pointer on a range shows its BYOK spend, tokens, and top models. A standard key adds Budget and
+  Free Requests.
+- OpenRouter: Today, This Week, and This Month no longer show the BYOK an earlier build saved. BYOK
+  shows only when resting the pointer on a range.
+- Accounts: a new Cursor account is named after its email, not "Cursor Account".
+- Accounts: every account has a name the card shows. A blank name, or one that only repeats the
+  provider's, becomes `<Provider> Account`, such as `OpenRouter Account`, for existing accounts too.
+- Provider responses are no longer saved to a cache under `~/Library/Caches`. The last fetched usage is
+  saved on this Mac in the app's own preferences, with account names and the layout.
+- Accounts: a new Ollama account is named after its ollama.com email, not "Ollama".
+- Claude: the plan reads Max or Ultra, Anthropic's new names for Max 5x and Max 20x.
+- Cursor: Today, Yesterday, and Last 30 Days add the tokens Cursor reports, and resting the pointer on a
+  range shows what Cursor reported for it: the charge, usage events, each kind of token, and the top
+  models.
+- Dashboard: resting the pointer on a range with nothing but a zero total says `<Provider> didn't report
+  any data for this range.`, for every provider.
+- Ollama: new Today, Yesterday, and Last 30 Days rows show the usage value and tokens Ollama reports
+  for each UTC day, a Requests row counts the last 30 days' requests, and resting the pointer on a
+  range shows what Ollama reported for it: requests, each kind of token, and the top models.
+- ChatGPT: Today, Yesterday, and Last 30 Days show the tokens counted on UTC days, and Credit Limit
+  shows a workspace's spending limit. Resting the pointer on a range shows what ChatGPT reported for it.
+- Grok: a new sign-in no longer asks for `profile` or `api:access`, so its token can't run Grok
+  models. Add the account again to drop them from an existing sign-in.
+- Accounts: connect a CLIProxyAPI server with its address and management key, and its Claude,
+  ChatGPT, Antigravity, Devin, and Grok logins show as accounts, kept in step with the server. A login
+  you also signed in directly shows twice; the hub's copy carries the CLIProxyAPI mark.
+- Accounts: each CLIProxyAPI hub is one row under your accounts. Its page lists the accounts it mirrors
+  and holds Replace Management Key… and Remove Hub…. You can connect more than one hub. On hub and
+  account pages, the replace-key and remove actions sit together in one card.
+- CLIProxyAPI: a hub on Tailscale connects over http, the Connect sheet shows one message at a time,
+  and it says when a hub doesn't use https.
+- Panel: it is exactly as tall as its content, with no empty space under a short list, and its top edge
+  no longer jumps while it resizes. On macOS 15 it grows with the slide back from Accounts, not after it.
+- Accounts: accounts keep one order on every screen, grouped by provider, and an account keeps its place
+  when another account of its provider is removed.
+- Accounts: a saved account this build can't read no longer hides the others, and it is kept as it was.
+- Accounts: renaming an account keeps ⌘Z undo for the layout. Hiding every metric shows a line pointing
+  to Accounts, not the Add an Account screen.
+- Accounts: replacing a key that was waiting out a rate limit reads the new key at once.
+- Copilot: an organization account's right-click menu opens its **Organization Billing** page.
+- Sign-ins: Claude and Antigravity send a random `state`, never the PKCE verifier. A pasted Devin token
+  is masked.
+- Sign-ins: a stray request to the sign-in callback, or a network error during a device-code sign-in,
+  no longer ends the sign-in.
+- Sign-ins: a Claude sign-in whose profile can't be read fails with **Try Again** instead of adding an
+  account with no identity, and **Sign In Again** always checks the new sign-in with its own request.
+- Antigravity: a refused token is renewed once, as in 0.7.16, and a failed project lookup is tried again
+  on the next refresh instead of reading as an expired sign-in.
+- Refresh: one stuck read no longer stalls every refresh and notification.
+- Rate limits: a manual refresh, an early sign-in renewal, and a Claude request that finishes late all
+  respect the provider's newest rate-limit wait. Copilot reads GitHub's rate-limit 403 as a rate limit,
+  not a rejected token, and Antigravity keeps the wait when both of its hosts answer 429.
+- Claude: once a reset spends a grant's last reset, a reset left on another grant can be claimed without
+  waiting for the next hourly check.
+- Cursor: a usage event without tokens adds 0 tokens, so it no longer hides its range's token total.
+- Notifications: Settings reads the notification permission from macOS each time, so a permission
+  turned off in System Settings shows as off.
+
+### Kept
+- Automatic updates through Sparkle, with the same release feed, the beta channel, and the update
+  banner.
+- **Check for Updates…** in the dashboard's **⋯** menu, between Settings and Report an Issue…, as in 0.7.x.
+  The dev build shows it and the Settings Updates section disabled instead of hiding them.
+- Anonymous telemetry through PostHog, with the same opt-out in Settings for extra analytics. An
+  anonymous daily active ping and crash reports are always sent; they are not optional.
+- Notifications, keyboard shortcuts, Launch at Login, Theme, and Time Format.
+- The Almost Out, Cutting It Close, and Will Run Out switches in Settings, named after the alerts they
+  send. A line under each says when it fires, in place of 0.7.x's info button.
+- The proxy setting in `~/.openusage/config.json`, which now covers sign-in too and logs an error
+  when the file is invalid.
+- Your 0.7.x hidden metrics, metric order, and provider order, on the first account you add for each
+  provider, from the account 0.7.x had on. Stars don't carry over. 0.7.x's saved layout stays on disk
+  unchanged, so a downgrade finds it as it was.
+- The OpenRouter and Z.ai keys you typed into 0.7.x, added once as accounts on the first launch when
+  the provider has no account yet, 0.7.x had it on, and the key still passes a usage read. A key that
+  couldn't be checked or saved is tried again on the next launch. The key files stay unchanged.
+- Hide From Screen Share, which shows the app icon in the menu bar instead of usage while the
+  screen is shared or recorded.
+- ChatGPT's Extra Usage row shows the credits' dollar value, an estimate at 4¢ a credit.
+- Copilot Org Credits and Org Spend, now on an organization account added with an owner's or billing
+  manager's token.
+- The `openusage` command, which now prints what the app last fetched and nothing computed. `--force`
+  is accepted and does nothing.
+- OpenRouter's **Credits** quick link, after Status Page and Usage Dashboard.
+- Ollama's and Z.ai's **API Keys** quick link, after Usage Dashboard.
+- Z.ai's notice when a key has no GLM Coding Plan.
+- Claude's Extra Usage reads like `$12.34 spent` when the account sets no monthly limit.
+- A Grok team account's plan, shown beside the notice that the account has no personal quota.
+- Cursor Enterprise and Team seats that Cursor's plan endpoint reports as Pro keep their Enterprise or
+  Team label, Extra Usage, and request-based usage. The membership now comes from Cursor's
+  `usage-summary`, read once an hour, not from Cursor's local database.
+- Cursor's Today, Yesterday, and Last 30 Days rows, now the dollars Cursor reports it charged for
+  on-demand usage. Usage your plan includes counts as $0, and the Usage Trend chart is gone.
+- Devin's Daily, Weekly, and Extra Usage rows. Sign in on windsurf.com and paste the token it shows,
+  or paste a Windsurf API key.
+- Claiming a Claude or ChatGPT rate-limit reset refreshes that account right away, so its meters and
+  Limit Resets count update as soon as the result shows.
+
+## v0.7.16
+
+> **A new OpenUsage is coming.** The next update removes spend and token tracking, with no transition period, and moves sign-in into the app. To keep these features, stay on this version. Details: [#1441](https://github.com/robinebers/openusage/issues/1441)
+
+### New Features
+- Add Antigravity Argon quota and pricing ([#1395](https://github.com/robinebers/openusage/pull/1395)) by @validatedev
+- Add a dashboard notice that the next version drops spend and token tracking by @robinebers
+
+### Bug Fixes
+- Move dashboard caret below expanded metrics ([#1382](https://github.com/robinebers/openusage/pull/1382)) by @robinebers
+- Read only the new lines of growing Claude and Codex logs ([#1383](https://github.com/robinebers/openusage/pull/1383)) by @robinebers
+- Find Claude and Codex accounts off the main thread at launch ([#1384](https://github.com/robinebers/openusage/pull/1384)) by @robinebers
+- Check each Codex log line for event markers in one pass ([#1390](https://github.com/robinebers/openusage/pull/1390)) by @robinebers
+- fix(antigravity): restore Gemini meters and plan badge from Cloud Code ([#1407](https://github.com/robinebers/openusage/pull/1407)) by @validatedev
+- fix(cursor): Enterprise badge + Extra Usage from usage-summary ([#1409](https://github.com/robinebers/openusage/pull/1409)) by @dariocurr
+- Coalesce refresh-end work (Runway #47, MIT) ([#1391](https://github.com/robinebers/openusage/pull/1391)) by @robinebers
+- Claim Claude usage-limit resets from the resets popover ([#1413](https://github.com/robinebers/openusage/pull/1413)) by @robinebers
+
+### Chores
+- chore(deps): bump github.com/posthog/posthog-ios from 3.90.2 to 3.92.0 ([#1406](https://github.com/robinebers/openusage/pull/1406)) by @app/dependabot
+- ci(release): skip already-uploaded dSYMs on stable promotions by @robinebers
+- docs: changelog for v0.7.15 by @robinebers
+- docs: changelog for v0.7.16-beta.1 by @robinebers
+
+---
+
+### Changelog
+**Full Changelog**: [v0.7.15...v0.7.16](https://github.com/robinebers/openusage/compare/v0.7.15...v0.7.16)
+
+- [05c7a87](https://github.com/robinebers/openusage/commit/05c7a87805d7f0d76cb5048fbe4c4caa4d2de784) Move dashboard caret below expanded metrics (#1382) by @robinebers
+- [5c9d9a7](https://github.com/robinebers/openusage/commit/5c9d9a7724933b58bf14c094d59a530af315b017) Read only the new lines of growing Claude and Codex logs (#1383) by @robinebers
+- [bae20d9](https://github.com/robinebers/openusage/commit/bae20d9ca7eb5aaab93cdae2673846d24ee5e8d2) Find Claude and Codex accounts off the main thread at launch (#1384) by @robinebers
+- [063eb06](https://github.com/robinebers/openusage/commit/063eb0661ca810905e3f981aaaaff95a7df2e66e) Add Antigravity Argon quota and pricing (#1395) by @validatedev
+- [3a2c9bb](https://github.com/robinebers/openusage/commit/3a2c9bb08a46590505362fded31116de0ae2e710) chore(deps): bump github.com/posthog/posthog-ios from 3.90.2 to 3.92.0 (#1406) by @app/dependabot
+- [f0039b2](https://github.com/robinebers/openusage/commit/f0039b270d1f4a3b5152fe3253fca53ac304240f) Check each Codex log line for event markers in one pass (#1390) by @robinebers
+- [9e6d362](https://github.com/robinebers/openusage/commit/9e6d36235263e3b06087be7cafc35395ebd8f5ba) fix(antigravity): restore Gemini meters and plan badge from Cloud Code (#1407) by @validatedev
+- [eab20cf](https://github.com/robinebers/openusage/commit/eab20cfda184b2743c9c9e3ad561abad92abb4f0) fix(cursor): Enterprise badge + Extra Usage from usage-summary (#1409) by @dariocurr
+- [bfb0fbb](https://github.com/robinebers/openusage/commit/bfb0fbbf2acad3d0ae2b3d36f2266f35debddb7c) Coalesce refresh-end work (Runway #47, MIT) (#1391) by @robinebers
+- [a7953bf](https://github.com/robinebers/openusage/commit/a7953bf71ff0cd68680b2c553be5a6d7beb80c09) Claim Claude usage-limit resets from the resets popover (#1413) by @robinebers
+- [a9b2625](https://github.com/robinebers/openusage/commit/a9b26251d49d31e6663ab6ac351bffde2a37e7fc) docs: changelog for v0.7.15 by @robinebers
+- [c9afc90](https://github.com/robinebers/openusage/commit/c9afc904ab487914150ccb77c8e837c177de9975) docs: changelog for v0.7.16-beta.1 by @robinebers
+- [26132ff](https://github.com/robinebers/openusage/commit/26132ff48dd78eb2c4a9498e40424e6365f99fec) ci(release): skip already-uploaded dSYMs on stable promotions by @robinebers
+- [ad09121](https://github.com/robinebers/openusage/commit/ad091211563e2db0ae27825bdbd84bd6bab70128) Add a dashboard notice that the next version drops spend and token tracking by @robinebers
+
 ## v0.7.16-beta.1
 
 ### New Features

@@ -2,9 +2,19 @@ import AppKit
 import SwiftUI
 
 struct EmptyDashboardView: View {
-    let chooseProviders: () -> Void
+    var defaults: UserDefaults = .standard
+    let addAccount: () -> Void
+
+    /// 0.7.x found accounts on its own, so an install it ran on opens here with nothing signed in. Every
+    /// 0.7.x release stamps `openusage.settings.schemaVersion` at launch, and this build never writes it.
+    var copy: (title: String, message: String) {
+        defaults.object(forKey: "openusage.settings.schemaVersion") != nil
+            ? ("Welcome Back", "OpenUsage no longer reads your local accounts automatically. Add back any account you'd like it to track. Even multiple of the same provider!")
+            : ("Add an Account", "OpenUsage tracks however many accounts you'd like to monitor. Just add them and they'll show right up, even multiple of the same provider!")
+    }
 
     var body: some View {
+        let copy = copy
         VStack(spacing: 0) {
             Image(nsImage: NSApplication.shared.applicationIconImage)
                 .resizable()
@@ -14,10 +24,10 @@ struct EmptyDashboardView: View {
                 .padding(.bottom, 14)
                 .accessibilityHidden(true)
 
-            Text("Make It Yours")
+            Text(copy.title)
                 .font(.system(size: 19, weight: .semibold))
                 .padding(.bottom, 7)
-            Text("Bring your AI usage, limits, and spend together. Choose what goes on your dashboard.")
+            Text(copy.message)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -25,18 +35,19 @@ struct EmptyDashboardView: View {
                 .frame(maxWidth: 230)
                 .padding(.bottom, 20)
 
-            Button(action: chooseProviders) {
-                Label("Choose Providers", systemImage: "plus")
+            Button(action: addAccount) {
+                Label("Add Account", systemImage: "plus")
                     .font(.system(size: 12, weight: .semibold))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 3)
             }
-            .onboardingPrimaryAction()
+            .buttonStyle(.borderedProminent)
             .controlSize(.large)
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 16)
         .padding(.top, 22)
         .padding(.bottom, 26)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }

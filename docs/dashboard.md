@@ -1,102 +1,152 @@
 # Dashboard
 
-The popover that opens from the menu bar icon. Providers are sections; each section shows the metrics you've enabled.
+The panel that opens from the menu bar icon. It has two tabs, Priority and All Usage.
 
-## First launch
+- The menu bar icon and the global shortcut open the Default Tab from Settings (Priority by
+  default). A usage notification opens All Usage.
+- With no accounts, both tabs show **Add Account**.
+- Closing the panel returns it to the dashboard, scrolled to the top.
 
-A fresh install opens a welcome screen instead of turning providers on by itself. It lists the providers signed in on your Mac, found without any permission dialogs, and you choose which ones to connect. After you connect providers, a one-time card at the top of the dashboard points to **Customize**, where you can turn any provider on or off; the card stays until you close it with its ✕ button.
+## Priority
 
-When no provider is on, the dashboard shows **Choose Providers**, which opens Customize.
+Priority shows only what needs you, most urgent first.
 
-Updates never change the providers you already have on or off — but when an update ships a provider you've never seen, a local check runs once for just that provider and turns it on only if you actually have the tool. See [Which Providers Are On](provider-enablement.md) for the full lifecycle.
+- **Pinned** comes first, with every pinned metric that has data. A pinned metric that's running
+  out moves to Running Out until it recovers, one that's used up moves to Used Up until it resets,
+  and one listed under Use It or Lose It moves there until it resets.
+- **Running Out** lists every limit at or under its Warning level (30% left by default, set in
+  [Settings → Display → Priority](settings.md#priority)). With **Burning Fast** on, it also lists a
+  limit that would run out before it resets at your current pace, however much it has left, with the
+  time it would run out, like `Out in 1h 8m`, in place of its reset. It stays listed until its pace eases to
+  90% of the limit. What would run out soonest at your current pace comes first, then limits with no
+  pace, least left first.
+- **Use It or Lose It** lists, with the setting of that name on, a limit that resets within 24 hours
+  with over 50% left, the same rule as the alert. Only windows longer than a day count, never the
+  5-hour session or a dollar spending cap. Each shows when it resets, like `Resets in 18h`, soonest
+  first. These show in the menu bar only with Always Show In Menu Bar on.
+- **All Clear** shows under Running Out when every account has a current reading and nothing is
+  running low. It waits for accounts that haven't reported yet.
+- **Needs Attention** names an account whose refresh failed or whose provider sent a notice.
+  **Fix** opens the account's page with the reason and how to fix it.
+- **Used Up** always comes last. It lists what has run out, soonest reset first. A balance with no
+  limit, such as Cursor credits, shows here only at exactly zero.
 
-Each provider card leads with its **Always Visible** metrics. When a card is collapsed, On Demand metrics and quick links are hidden behind the in-card caret at the bottom. Click it to expand: a thin line marks the boundary after Always Visible, followed by the On Demand rows and quick links, with the caret at the bottom of the card. Click the caret again to collapse. Open cards stay open across popover closes and app restarts. A provider with neither On Demand metrics nor quick links shows no line or caret.
+With Pace Marks on, each limit's ring carries the same pace mark as its bar in All Usage, clockwise
+from 12 o'clock.
 
-When you expand a card, the tucked-away metrics open below the line as a single-column list, so each detail row keeps the full card width.
+Ties keep your dashboard order. If no account has a limit to monitor, **No Reported Limits** links
+to All Usage.
 
-A provider card can also show **quick-link buttons** pinned at the bottom of its expanded section — Status, Console, Dashboard, and the like — that open the provider's own pages in your default browser. They're part of the expander, so collapsing the caret hides them along with the tucked-away metrics. The caret sits below the links. Buttons lay out up to three across, wrapping to a second row when there are more.
+## All Usage
 
-## Total Spend
+One card per provider, with each account's name, plan, and metrics inside. The card holds every
+metric with data that you haven't hidden, in your order.
 
-When any enabled provider tracks daily spend (Claude, Codex, Cursor, Grok, or OpenCode), a card sits above the provider sections. The title is a pull-down menu for **Cost**, **Cost/MTok**, or **Tokens** (Cost is the default; the choice sticks across restarts). A capsule switcher flips the period between **Today**, **Yesterday**, and **30 Days**. The ring, center total, and ranked legend follow the selected metric:
+- Time ranges always show, at 0 when the provider reports nothing.
+- Balances show even at `$0 left`.
+- Extra Usage shows while the provider has it on, even at `$0`, and hides while it's off.
+- A metric without a limit (a balance, a day's spend, a status) shows its value, such as
+  `$12.40 left`.
 
-- **Cost** — each segment is that provider's share of combined dollars (biggest spender first).
-- **Cost/MTok** — each segment is sized by that provider's dollars-per-million-tokens rate; the center is the blended rate across providers that have both spend and tokens; the legend lists each provider's own rate.
-- **Tokens** — each segment is that provider's share of combined tokens.
+### Limits
 
-The ring center is always two short lines — a compact number on top and a quiet unit underneath (`$533` / `dollars`, `12.4` / `million`, or `$1.37` / `MTok`) — so Cost/MTok and big totals stay readable in the hole. Cost modes keep the `$` on the number. Hover the center for the exact one-line figure (and a note when any contributor's dollars are a local estimate — Cost and Cost/MTok only). Each provider keeps a fixed color drawn from its brand (Claude's terracotta, OpenAI's green, and so on), and even a tiny share keeps a visible sliver of the ring. Providers with nothing for the selected metric simply don't appear — they're never counted as zero. (An enabled provider counts even if you've hidden its own spend rows in Customize; other dollar rows, like OpenRouter's API spend, never mix in.) The header's share icon (or right-clicking the card) copies a branded PNG of the ring to your clipboard, just like sharing a provider card. The header also carries a small ⓘ naming the providers that feed the total. A period with nothing to show for the active metric shows a quiet empty state instead of hiding the card. Don't want the card at all? Turn it off with **Show Total Spend** at the top of [Settings](settings.md).
+A limit row shows its label, a bar, its amount, and the time until it resets.
 
-## Rows
+- Click any amount, on either tab, to flip every row between used and left. Click any reset to flip
+  between a countdown and the exact time. **Settings → Display** has the same two switches.
+- Countdowns update every 30 seconds.
+- Hover over a bar to see where your current pace lands at reset. The same pace drives the
+  [notifications](settings.md).
+- A tick on the bar marks where it would be by now at an even pace through the window: under Used
+  at the share of the window that has passed, under Left at the rest. It moves with the clock. A limit
+  gets no mark without a reset window, before 1% of the window (and a minute) has passed, before its
+  session has started, or once it's used up. The marks show with **Settings → Display → Pace Marks**
+  on, which is off by default.
 
-**Metrics with a limit** (session, weekly, credits with a cap) show a progress bar with:
+### Resets
 
-- A fill whose color is a verdict on the whole window, based on your current burn rate: blue while you're on course to finish with at least 10% to spare, yellow when you're projected to land inside the last 10% with a little cushion to spare, red when you're projected to run out before the reset — or to finish right at the limit with nothing to spare. So a half-full bar burning too fast is already red, and a nearly-drained bar coasting to the reset stays blue. Bars without a reset window (like a credit balance), and fresh windows too young to project, color by the level itself instead: yellow once 80% is used, red once 10% or less is left. The colors come from the system palette, so they adapt to light/dark and accessibility settings, and they never flip with the Used/Left toggle.
-- A headline like `52% left` or `48% used`. **Click it** to flip between Used and Left everywhere — hovering shows the opposite reading.
-- A reset label like `Resets in 3h 25m` or `Resets today at 6:38 PM`. **Click it** to flip between countdown and exact time everywhere — hovering shows the other format.
-- A blue bar carries nothing extra by default. With **Always Show Pacing** on (Settings), it also shows an even-pace tick on the bar and a quiet `~35% left at reset` note next to the metric name. A metric with nothing used yet stays plain even then — there's no pace to project until something has been spent.
-- A yellow bar adds a `~3% spare` note right-aligned next to the metric name, plus the even-pace tick on the bar (where usage would sit if you burned evenly across the window). That cushion is always at least 1%; if you're projected to finish with nothing to spare it turns red instead (so a yellow bar never reads `~0% spare`).
-- A red bar swaps the note for a red flame next to the metric name with the projected run-out time — `Limit in 3h 5m` or `Limit today at 11:49 PM`, following the same countdown/exact format as the reset label — and still shows the even-pace tick on the bar. **Click the time** to flip the format everywhere, just like clicking the reset label. When you're projected to finish right at the limit — no run-out before the reset, just no cushion left — the flame shows alone with no time.
-- Once the balance is spent — actually empty, or so close it rounds to `0` (like `0% left` or `$0.00`) — the bar stays red and the flame reads `Limit reached`, no matter how gentle the burn rate looked. A visibly empty bar never shows a calmer color.
-- **Hover the bar**, the spare note, or the flame for the pace projection at reset — the one number not already on the row: a blue bar shows the cushion you're on course to finish with (`~35% left at reset`), a yellow bar the usage it complements the spare note with (`~92% used at reset`), a red bar how far past the limit you're projected to land (`~12% over limit at reset`, or `~100% used at reset` when you're projected to finish right at it). Once spent it reads `Limit reached`.
+Claude, ChatGPT, and Z.ai accounts show a **Limit Resets** row while they have rate-limit resets
+available. Hover over the count to see the expiry dates, or click it to keep them open. To spend a
+reset, choose **Use**, then **Reset**. Z.ai lists its Session and Weekly resets apart, and only the
+earliest of each can be used.
 
-**Metrics without a limit** (daily spend, balances) show as a single line like `$4.08 spent` or `1.2M tokens`. The Today / Yesterday / Last 30 Days rows combine cost and tokens (`$4.08 · 1.2M tokens`) and can be turned on or off in Customize. A day with no usage reads "No data" rather than a misleading `$0.00 · 0 tokens` — the same as when the source can't be loaded at all. Big numbers are abbreviated to keep rows tidy (`$2.06K`, `1.5B`) — hover the value to see the exact figures and source note, such as a local estimate.
+### Account status
 
-For Claude, Codex, Cursor, Grok, and OpenCode spend rows, the value gently highlights when you point at it, signaling it's interactive; hovering it for a moment opens a small model breakdown for that period: a ranked list of models, each showing its name and spend on one line, its share percentage and tokens on the next, and a thin share bar. Cursor groups its per-thinking-effort model names (like `claude-opus-4-8-thinking-max`) under the base model. Long tails fold into **Other** — anything past the top named models or under 5% of the period. Models no pricing source can price don't appear here (or in the row's totals) at all; the row's warning triangle names them instead (see [Pricing](pricing.md)).
+- A spinner after an account's name means it's refreshing.
+- A warning means its last refresh failed, or the provider has no usage to report for it.
+- A clock means its values are more than two refresh cycles old.
 
-**Usage Trend** (Claude, Codex, Cursor, Grok, and OpenCode) is a small bar chart of the last 30 days of token usage — the current local calendar day plus the preceding 29 days, with one bar per day — drawn from the same source as that provider's spend rows (local logs for Claude, Codex, Grok, and OpenCode; Cursor's usage history for Cursor). **Hover it** for the peak day, the date range, and the source. It's on by default; turn it off or reorder it from Customize like any other metric. It can't be starred for the menu bar — the strip shows single values, not a chart.
+Hover over the warning or the clock, or right-click the account, to see why.
 
-With [iCloud Sync](icloud-sync.md) on, the machine-local providers' spend rows, trends, warnings, and
-model breakdowns are rebuilt from all synced Macs. Cursor stays unchanged because its usage history is
-already account-wide. Quotas, plans, balances, and provider errors always describe this Mac's refresh.
+## Hiding, pinning, and ordering metrics
 
-Rows with a reset date tick every 30 seconds, so countdowns and pace stay live between refreshes.
+An account's page in **Accounts** lists all of its metrics.
+
+- Turn a metric's switch off to hide it everywhere: All Usage, Priority, the menu bar, and
+  notifications.
+- Click the pin, or right-click the metric on the dashboard and choose **Pin**, to list it under
+  Pinned on Priority. A hidden metric can't be pinned.
+- Drag a metric by its handle to move it within the account.
+- A new account shows every metric, in the provider's order.
 
 ## Right-click menus
 
-Every row: **Hide · Star for menu bar / Unstar · Refresh \<provider\> · Customize…** (Customize opens straight to that provider's metrics.)
-Provider headers: **Hide \<provider\> · Refresh \<provider\> · Customize…** (Hide turns the whole provider off; turn it back on in Customize. Customize opens straight to that provider's metrics.) plus **Share Screenshot** (see below).
+- A provider: **Refresh**, **Manage Accounts…**, **Share Screenshot**, and links such as **Status
+  Page** and **Usage Dashboard**.
+- An account: **Refresh**, **Rename**, **Edit Account…**, and **Share Screenshot**. A Copilot
+  organization account also has **Organization Billing**.
+- A metric: **Pin** or **Unpin**, then its account's menu.
+
+## Reordering
+
+- On All Usage, drag a provider by its header, an account by its name, or a metric by its row.
+- On the Accounts screen, an account moves past another provider only when both providers have one
+  account.
+- A new provider goes to the bottom, and a new account goes to the bottom of its provider. The app
+  never sorts providers or accounts for you.
+- Coming from 0.7.x? See [Upgrading from 0.7.x](settings.md#upgrading-from-07x).
+- Press **⌘Z** to undo the last layout change.
+
+## Usage details
+
+Hover over a Today, Yesterday, or similar figure to preview its details. Click it to keep them open.
+
+- The details show charges, tokens, and the top five models, with the rest under **Other**.
+- For ChatGPT, each percentage is the model's share of the credits or turns for the range.
+- A range adds up the days that supplied each figure. A quiet or unreadable day adds nothing.
+- The copy button copies a PNG of the details.
 
 ## Share
 
-Copy a clean, branded PNG of one provider's usage to your clipboard, ready to paste into a chat, a tweet, or a doc. There are two ways to reach it:
+Hover over a provider's card and click the copy button beside its logo, or choose **Share
+Screenshot**, to copy a PNG of its card. On one account in a card of several, it copies only that
+account. Emails are left out, or every account name is blurred with
+[Privacy Mode](privacy.md#privacy-mode) on.
 
-- Right-click a provider header and choose **Share Screenshot**.
-- Open the footer's **Options** menu and choose **Share Screenshot** ▸ *\<provider\>*. The submenu lists every provider currently showing on the dashboard.
+## Update banner
 
-The image is a flexible-height PNG using the app's look — the provider's mark and name up top, the metric rows you currently see for that provider, and a small OpenUsage mark centered at the bottom. It follows your Light/Dark appearance and shows everything on the card as-is (nothing is hidden or blurred).
+When a scheduled check finds a new version, an **Update Available** card shows above the provider
+cards. **Install Update** opens the update window, and ✕ hides the card until the next check. See
+[Updates](updates.md).
 
 ## Footer
 
-The bar pinned to the bottom of the popover. On the left: the app version, and a live "Next update in …" countdown you can click (or press **⌘R**) to refresh right away. On the right: an **Options** menu button. It holds everything in one place — **Customize**, **Settings**, **Share Screenshot** (submenu of providers), **Check for Updates…**, **Report an Issue…**, **About OpenUsage**, and **Quit OpenUsage**. **Report an Issue…** opens GitHub's issue chooser in your browser.
-
-## Customize
-
-Open Customize from the footer's **Options** menu (or press **Return**). It's a two-level screen: a list of providers, then a provider's detail.
-
-The **provider list** shows every provider with a switch to turn it on or off, a count of its metrics, and a chevron into its detail. Turn a provider off and it stays in the list, greyed — its metrics hide from the dashboard and menu bar but keep their setup for when you turn it back on. Drag enabled providers by their grip to reorder; tap a row to open its detail. On a fresh install only the providers you connect on the welcome screen start on (see "First launch" above); this list is where you add the rest.
-
-A provider's **detail** has a back button and provider-specific Reset control in its top bar, followed by two metric sections: **Always Visible** (shown on the dashboard card) and **On Demand** (tucked behind the card's caret). Each metric row has a drag grip, its name, an always-visible star for the menu bar, and an on/off switch. Drag a metric into the other card—or onto one of that card's rows—to move it between Always Visible and On Demand. An empty card shows a dashed **Drag metrics here** target. You can star up to two metrics per provider. OpenRouter and Z.ai also show an **API Key** section here, where you can add, replace, reveal, or clear that provider's key.
-
-Drag-reorder also works directly on the dashboard — drag a row within its provider, drag it across the caret boundary while the card is open, or drag a provider header to reorder sections. On a Force Touch trackpad you'll feel a light tap each time the dragged item snaps into a new slot.
-
-The default reset layout keeps each provider's core quota meters and Usage Trend always visible, then tucks balances, reset details, and spend-history rows on demand. Optional detail rows like Claude Sonnet and Cursor Requests/Credits stay off by default, but start on demand if you enable them.
-
-Made a change you didn't mean to? Press **⌘Z** to undo — it works anywhere in the popover (the dashboard and Customize alike) and steps back through your recent customization changes one at a time: hiding or showing a metric, reordering metrics or whole providers, starring or unstarring, and moving a metric across the divider all undo. Each step restores the exact previous arrangement. Undo is per-session (it starts fresh after a relaunch), and resetting clears it.
-
-When OpenUsage ships a new default metric, existing layouts get it once. If you turn it off, it stays off. A provider's **Reset** button (top right of its detail) restores that provider's default metrics, order, menu-bar stars, and which metrics start on demand, but leaves other providers and the provider order untouched. The **Reset All Customization** button (top right of the provider list) does the same for every provider at once, restores the default provider order, and re-detects your installed tools — turning providers back on for exactly the tools set up on your Mac, using the same local check as the welcome screen (see [Which Providers Are On](provider-enablement.md)). It asks for confirmation first, since it wipes the whole layout and re-detects providers, and can't be undone.
+- **OpenUsage** and the version, like `OpenUsage 0.8.0`, sit over **Next update in …**, which counts
+  down to the next refresh. Click it or press **⌘R** to refresh now. A dev build shows its commit,
+  like `dev (abc1234)`.
+- On Priority, a button copies the tab as a PNG, leaving emails out the same way.
+- The **⋯** menu has **Accounts**, **Settings**, **Check for Updates…**, **Report an Issue…**,
+  **About OpenUsage**, and **Quit OpenUsage**.
 
 ## Keyboard
 
 | Key | Action |
 |---|---|
-| Return | From the dashboard, open Customize; from a provider detail, return to the provider list; from the provider list or Settings, return to the dashboard |
-| Esc | From a provider detail, return to the provider list; from the provider list or Settings, return to the dashboard; from the dashboard, close the popover |
-| ⌘Z | Undo the last customization change (app-wide; repeat to step back) |
-| ⌘R | Refresh now from the dashboard or Settings (skips the cache) |
-| ⌘, | Open / close Settings (in the popover) |
+| Return | From the dashboard, open Accounts; from an account's page, return to the list; from the list or Settings, return to the dashboard |
+| Esc | Same as Return one level up; from the dashboard, close the panel |
+| Space | Open the details for a focused usage-history figure or Limit Resets count |
+| ⌘Z | Undo the last layout change |
+| ⌘R | Refresh now (skips the cache) |
+| ⌘, | Open or close Settings |
 
-A global shortcut (recorded in Settings) toggles the popover from anywhere.
-
-## Closing
-
-Closing the popover resets navigation state: scroll position returns to the top and Customize / Settings close. Provider cards remember whether their expand caret was open.
+A global shortcut, recorded in Settings, toggles the panel from anywhere.

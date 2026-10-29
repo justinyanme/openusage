@@ -1,115 +1,96 @@
 # Architecture
 
-A high-level map of how OpenUsage is put together, for people working on the code. For what the app
-*does*, start with the [behavior docs](README.md).
+OpenUsage is a SwiftPM package with three targets:
 
-## The shape of the app
+- `OpenUsage`: the library, where everything lives.
+- `OpenUsageApp`: a thin executable.
+- `OpenUsageCLI`: the `openusage` command, shipped at `Contents/Helpers/openusage`.
 
-OpenUsage is a SwiftPM package with a shared module and two thin executables — there is no Xcode project.
-The main executable is a menu-bar app: a SwiftUI interface hosted inside an AppKit status item and panel.
-The code is grouped by role:
-
-- `App/` — startup and the AppKit bridge (status item, panel, the app entry point).
-- `Models/` — the small value types the rest of the app speaks in (`MetricLine`, `WidgetData`, descriptors).
-- `Providers/` — one folder per provider (Claude, Codex, Cursor, Devin, Grok, OpenCode, …).
-- `Stores/` — the mutable state the UI observes.
-- `Services/` — shared infrastructure (HTTP, the local API, process running).
-- `Support/` — small shared helpers (formatting, parsing, animations).
-- `Views/` — the SwiftUI screens (dashboard, customize, settings, menu-bar strip).
+It uses Swift 6 with strict concurrency, and SwiftUI inside an AppKit status item and panel.
 
 ## Composition root
 
-`AppContainer` is the one place that wires everything together. At launch it builds the list of
-providers, turns it into a `WidgetRegistry`, creates the stores, starts the periodic refresh loop, and
-starts the local HTTP API. Everything else receives what it needs from here rather than reaching for
-globals, which keeps the pieces testable in isolation.
+`AppDelegate` (`App/OpenUsageApp.swift`) builds `AppContainer`, starts the refresh loop, creates
+`StatusItemController`, and starts Sparkle. It also imports the OpenRouter and Z.ai keys 0.7.x saved
+(`Stores/APIKeyV1Files.swift`).
 
-The `openusage` executable imports the same module. A normal invocation reads `ProviderSnapshotCache`
-and exits; `--force` constructs the canonical `ProviderCatalog` and calls `WidgetDataStore`'s forced
-refresh path before reading. Providers annotate the scalar resources they export through the stable
-limits contract; the CLI and `/v1/limits` share one serializer over those same normalized snapshots.
-It never launches the GUI or duplicates provider, auth, pricing, or mapping logic.
+`AppContainer` (`App/AppContainer.swift`) owns the long-lived stores:
 
-## The provider pipeline
+| Store | Owns |
+|---|---|
+| `AccountStore` | Accounts, CLIProxyAPI hubs, and the `CredentialVault`. |
+| `CLIProxyHubSync` | The reads that keep each hub's accounts in step with its logins. |
+| `LayoutStore` | Provider order, metric order, and undo history. |
+| `PopoverState` | The popover's screen and sheets. |
+| `WidgetDataStore` | The latest snapshot per account, refresh errors, and display settings. |
+| `AccountRenameStore` | Which account name is being edited. |
+| `TelemetryRecorder` | The daily ping and optional daily provider account counts. |
+| `HideFromScreenShareSetting` | The Privacy Mode switch. |
 
-Each provider is a small module that conforms to `ProviderRuntime`. A refresh flows through three parts:
+Accounts are the source of truth. Every `AccountStore` change runs `AppContainer.syncAccounts`,
+which swaps the runtimes in place and refreshes new ones. The status item and panel are never rebuilt.
 
-1. **Auth store** — reads credentials that already exist on the machine (config files, keychain). OpenUsage
-   never asks the user to paste tokens.
-2. **Usage client** — makes the HTTP calls to the provider's API.
-3. **Mapper** — turns the provider's response into the app's own vocabulary: a `ProviderSnapshot`
-   containing typed widget values (`.progress`, `.values`, `.badge`, `.chart`) plus `.text` notices that
-   remain available through the local API but do not render as widgets.
+## Accounts and sign-in
 
-Because every provider produces the same normalized `MetricLine` shapes, the UI renders them all the same
-way and doesn't need to know provider-specific details. To add one, see
-[Adding a provider](adding-a-provider.md).
+- `ProviderKind` (`Models/Account.swift`) lists the providers with their names, icons, links, and
+  auth methods.
+- `ProviderLogin` (`Services/ProviderLogin.swift`) is the sign-in contract. It drives a browser,
+  token-page, or device-code prompt and returns a label and a credential. `ProviderLoginCatalog`
+  maps each kind to its login.
+- Browser logins live in `Services/BrowserProviderLogins.swift`, device-code, Cursor, and API-key logins in
+  `Services/DeviceProviderLogins.swift`, and Devin's in `Providers/Devin/DevinLogin.swift`.
+- `CredentialVault` (`Services/AccountCredentialVault.swift`) keeps one credential per account in
+  the app's Keychain service.
 
-Claude, Codex, Grok, and pi share `IncrementalJSONLScanner` for local JSONL history. Its per-file parsed events
-are cached by path, size, and modification time in a versioned Application Support store, partitioned by
-provider/home identity. Provider instances reading the same home share one scanner actor, which avoids
-duplicate parsing across cards; the disk store provides the reuse across process launches. Scans drop
-source-file records as their modification dates leave the requested history window, while aggregation and
-pricing still run on every refresh from the cached events. Files are read in small bounded batches;
-unusually large individual records are skipped and logged so media-heavy or malformed histories cannot
-exhaust memory.
+A CLIProxyAPI hub (`Models/CLIProxyHub.swift`) is not a provider. Each supported login on a hub is an
+ordinary account of its provider. Its `HTTPClient` is a `HubTunnel`
+(`Services/CLIProxyHubClient.swift`), which sends each request through the hub, so the provider's
+own code runs unchanged.
 
-## Local subprocesses
+## Usage
 
-Credential and discovery helpers capture stdout and stderr on separate private queues. Both streams
-are read while the command runs, so large output and a busy shared worker pool cannot strand pipe
-reads. A command that reaches its deadline still terminates its process tree and reports a timeout.
+`AccountProviderRuntime` (`Providers/AccountProviderRuntime.swift`) runs one account. It declares
+the account's metrics (`widgetDescriptors`), loads the credential, calls the usage client, maps the
+response to `MetricLine` values, and returns a `ProviderSnapshot`.
 
-## Stores
+Each `Providers/<Name>/` folder has a `<Name>UsageClient` for HTTP and a `<Name>UsageMapper` that
+maps the response. Token refresh and reset claims live there too, as runtime extensions.
 
-The UI reads from a few observable stores:
+`LayoutStore` keeps which metrics the user hid and their order. `WidgetDataStore` turns snapshots
+into data for the views.
 
-- `WidgetDataStore` — the latest snapshot per provider, plus refresh and caching. It keeps machine-local
-  cached snapshots separate from rendered snapshots so peer history can never be written back out and
-  counted again.
-- `LayoutStore` — which metrics are shown, the provider/metric order, and which metrics are starred for the
-  menu bar.
-- `ProviderEnablementStore` — which providers the user has turned on or off.
-- `ICloudUsageSyncStore` — one coordinated, atomic history file per Mac, iCloud metadata notifications,
-  and the visible device/error state. File access is injected for lifecycle and failure tests.
+## Refresh loop
 
-Refresh runs on a timer in `AppContainer`; each pass respects the cache, so the network is only hit once a
-snapshot has actually expired.
+`AppContainer.startRefreshing` runs at launch and then every 5 minutes (`RefreshSetting.interval`).
 
-Providers with spend tiles carry an explicit history scope beside their export descriptors. Machine-local
-sources can be summed across device files; account-wide sources such as Cursor cannot. `WidgetDataStore`
-re-renders only the spend rows from the union, leaving quota and error state local.
+- Each pass refreshes accounts, checks quota notifications, and ticks telemetry.
+- An account is skipped if its snapshot is less than an interval old or it is in backoff
+  (`RefreshBackoff`). Each account has a two-minute deadline.
+- Halfway between passes, `refreshHourlyReads` runs reads a provider must not get in the same burst
+  as usage, such as Claude's plan and reset grants.
+- ⌘R runs `refreshAll(force: true)`, which skips the cache and redoes the hourly reads.
 
-## The AppKit bridge
+## Command line
 
-macOS menu-bar apps live in an `NSStatusItem`. OpenUsage shows its content in a custom, key-capable
-`NSPanel` rather than an `NSPopover`: a popover's window is only key while the whole app is active, and
-activating a menu-bar (accessory) app is asynchronous and unreliable on recent macOS, so a popover
-ends up unable to receive keystrokes until a second click. A non-activating `NSPanel` whose
-`canBecomeKey` is `true` takes key focus the instant it opens, so keyboard navigation and the Settings
-shortcut recorder just work. `App/` owns that AppKit layer and hosts the SwiftUI views inside it, so
-the bulk of the UI can stay plain SwiftUI.
+`OpenUsageCLI` finds the app bundle it ships inside and hands off to `UsageReader`, which reads
+the stored accounts and the snapshot cache. `LimitsEnvelope` writes the `openusage.limits.v2`
+JSON. The command never refreshes and never opens the Keychain.
 
-SwiftUI measures each screen's content and drives panel resizing on the same animation clock as screen
-navigation. Row positions used for drag reordering stay outside observable view state, so scrolling and
-screen transitions don't rebuild their entire lists, and the panel's shadow updates once its size settles.
-The panel's top edge and every resize step land on whole points, so the panel stays still under the
-menu bar while its height animates. Settings stays mounted after its first visit so returning to it
-reuses its native controls.
+## Views
 
-## Platform support
+- `StatusItemController` (`App/StatusItemController.swift`) owns the `NSStatusItem` and the
+  `MenuBarPanel` that hosts `DashboardView`.
+- `PriorityBoard` (`Models/PriorityBoard.swift`) ranks accounts for both the Priority tab and the
+  menu bar, so the two always agree.
+- `DashboardView` switches between the dashboard (`DashboardContentView`), Accounts
+  (`AccountsView`, `AccountListView`, `AccountDetailView`, `HubDetailView`), and
+  `SettingsScreen`.
 
-OpenUsage runs on macOS 15 (Sequoia) and later. It is built against the latest SDK and back-deploys:
-on macOS 26 (Tahoe) it uses the system's Liquid Glass controls, and on macOS 15 it falls back to the
-standard controls with the same behavior (the footer still pins, the buttons keep their states). Every
-one of those version checks lives in a single file — `Support/LiquidGlassFallbacks.swift` — so the views
-stay free of `#available` checks.
+## Updates, telemetry, and logging
 
-The release build (`script/release.sh`) ships a universal binary (arm64 + x86_64), so a single DMG runs
-natively on both Apple Silicon and Intel Macs. The dev build (`script/build_and_run.sh`) stays host-arch
-only — a universal dev build just doubles compile time on the maintainer's own machine for no benefit.
-
-## Local HTTP API
-
-A small loopback server exposes the current usage as JSON on `127.0.0.1:6736` for other local tools. See
-[Local HTTP API](local-http-api.md) for the endpoints and the privacy tradeoff.
+- `UpdaterController` wraps Sparkle. Only `script/release.sh` writes `SUFeedURL`, so dev builds never
+  check for updates. See [Updates](updates.md).
+- `PostHogTelemetrySink` sends the anonymous daily ping, crash reports, and optional daily account
+  counts by provider. Events name providers, never accounts. See [Privacy](privacy.md).
+- `AppLog` writes to unified logging (subsystem `OpenUsage`). It drops lines below the level set in
+  Settings and redacts every message with `LogRedaction`. See [Debugging](debugging.md).

@@ -1,108 +1,72 @@
-import CoreFoundation
 import Foundation
 
-struct CursorUsageRow: Sendable, Equatable {
-    var date: Date
-    var model: String
-    var tokens: TokenBreakdown
-    var imputedCostDollars: Double?
-}
-
 struct CursorUsageEventsPage: Sendable, Equatable {
-    var events: [CursorUsageEvent]
     var totalCount: Int
-    var rejectedEventCount: Int
+    var events: [CursorUsageEvent]
 }
 
 struct CursorUsageEvent: Sendable, Equatable {
     var date: Date
-    var model: String
-    var tokens: TokenBreakdown
-}
-
-enum CursorUsageEventsError: Error, Equatable {
-    case invalidResponse
+    var model: String?
+    var totals: UsageTotals
 }
 
 enum CursorUsageEvents {
-    static func parsePage(_ data: Data) throws -> CursorUsageEventsPage {
-        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let totalCount = integer(object["totalUsageEventsCount"]),
-              totalCount >= 0,
-              let rawEvents = object["usageEventsDisplay"] as? [Any]
-        else {
-            throw CursorUsageEventsError.invalidResponse
-        }
+    /// On-demand usage, the only kind Cursor bills. Included, errored, and free events carry a
+    /// `chargedCents` too, but for them it is the value taken from the plan, not a charge.
+    static let chargeableKind = "USAGE_EVENT_KIND_USAGE_BASED"
+    static let measures: [UsageMeasure] = [.spend, .usageEvents, .tokens, .inputTokens, .cacheReadTokens, .cacheWriteTokens, .outputTokens]
+    private static let tokenKinds: [(field: String, measure: UsageMeasure)] = [
+        ("inputTokens", .inputTokens), ("cacheReadTokens", .cacheReadTokens),
+        ("cacheWriteTokens", .cacheWriteTokens), ("outputTokens", .outputTokens)
+    ]
+
+    /// Nil when the page or any event on it is not what Cursor sends, so a day is never summed from part
+    /// of its events. Cursor leaves out an empty event list, a zero `chargedCents`, and a zero token kind.
+    /// An event without `tokenUsage` counts zero tokens.
+    static func parsePage(_ data: Data) -> CursorUsageEventsPage? {
+        guard let object = ProviderParse.jsonObject(data),
+              let total = ProviderParse.number(object["totalUsageEventsCount"]),
+              total >= 0, total.rounded() == total, total < 1e15
+        else { return nil }
+        guard let rawEvents = (object["usageEventsDisplay"] ?? [Any]()) as? [Any] else { return nil }
 
         var events: [CursorUsageEvent] = []
-        var rejectedEventCount = 0
         for rawEvent in rawEvents {
             guard let event = rawEvent as? [String: Any],
-                  let timestamp = date(event["timestamp"]),
-                  let model = event["model"] as? String,
-                  let tokens = tokenBreakdown(event["tokenUsage"])
-            else {
-                rejectedEventCount += 1
-                continue
+                  let milliseconds = ProviderParse.number(event["timestamp"]), milliseconds >= 0
+            else { return nil }
+            var totals = UsageTotals(values: [.spend: 0, .usageEvents: 1])
+            if event["kind"] as? String == chargeableKind, event["isChargeable"] as? Bool != false,
+               let rawCents = event["chargedCents"] {
+                guard let cents = ProviderParse.number(rawCents), cents >= 0 else { return nil }
+                totals.values[.spend] = cents / 100
             }
+            guard let usage = (event["tokenUsage"] ?? [String: Any]()) as? [String: Any] else { return nil }
+            var tokens = 0.0
+            for kind in tokenKinds {
+                var count = 0.0
+                if let rawCount = usage[kind.field] {
+                    guard let parsed = ProviderParse.number(rawCount), parsed >= 0 else { return nil }
+                    count = parsed
+                }
+                totals.values[kind.measure] = count
+                tokens += count
+            }
+            totals.values[.tokens] = tokens
             events.append(CursorUsageEvent(
-                date: timestamp,
-                model: model.trimmingCharacters(in: .whitespacesAndNewlines),
-                tokens: tokens
+                date: Date(timeIntervalSince1970: milliseconds / 1000), model: event["model"] as? String, totals: totals
             ))
         }
-        return CursorUsageEventsPage(
-            events: events,
-            totalCount: totalCount,
-            rejectedEventCount: rejectedEventCount
-        )
+        return CursorUsageEventsPage(totalCount: Int(total), events: events)
     }
 
-    private static func tokenBreakdown(_ raw: Any?) -> TokenBreakdown? {
-        guard let raw else { return TokenBreakdown() }
-        guard let usage = raw as? [String: Any] else { return nil }
-        guard let input = tokenValue(usage, key: "inputTokens"),
-              let output = tokenValue(usage, key: "outputTokens"),
-              let cacheWrite = tokenValue(usage, key: "cacheWriteTokens"),
-              let cacheRead = tokenValue(usage, key: "cacheReadTokens")
-        else {
-            return nil
+    /// One day's events summed: a day with no events reports zeros.
+    static func day(_ events: [CursorUsageEvent]) -> UsageDay {
+        func sum(_ events: [CursorUsageEvent]) -> UsageTotals {
+            events.reduce(.zero(measures)) { $0.adding($1.totals) }
         }
-        return TokenBreakdown(input: input, cacheWrite5m: cacheWrite, cacheRead: cacheRead, output: output)
-    }
-
-    private static func tokenValue(_ usage: [String: Any], key: String) -> Int? {
-        guard let value = usage[key] else { return 0 }
-        guard let integer = integer(value), integer >= 0 else { return nil }
-        return integer
-    }
-
-    private static func date(_ value: Any?) -> Date? {
-        guard let value else { return nil }
-        let milliseconds: Int?
-        if let string = value as? String {
-            milliseconds = Int(string)
-        } else {
-            milliseconds = integer(value)
-        }
-        guard let milliseconds, milliseconds >= 0 else { return nil }
-        return Date(timeIntervalSince1970: Double(milliseconds) / 1000)
-    }
-
-    private static func integer(_ value: Any?) -> Int? {
-        guard let number = value as? NSNumber,
-              CFGetTypeID(number) != CFBooleanGetTypeID(),
-              number.compare(NSNumber(value: Int.min)) != .orderedAscending,
-              number.compare(NSNumber(value: Int.max)) != .orderedDescending
-        else {
-            return nil
-        }
-        let double = number.doubleValue
-        guard double.isFinite, double.rounded(.towardZero) == double else {
-            return nil
-        }
-        let integer = number.intValue
-        guard NSNumber(value: integer).compare(number) == .orderedSame else { return nil }
-        return integer
+        let named = events.filter { $0.model != nil }
+        return UsageDay(totals: sum(events), byModel: Dictionary(grouping: named) { $0.model ?? "" }.mapValues(sum))
     }
 }

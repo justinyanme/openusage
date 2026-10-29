@@ -1,13 +1,11 @@
 # Proxy
 
-OpenUsage can route all provider requests through an optional proxy.
+OpenUsage can send its provider requests through a proxy.
 
-- Supported: `socks5://`, `http://`, `https://`
+- Types: `socks5://`, `http://`, `https://`
 - Config file: `~/.openusage/config.json`
-- Default: off
-- UI: none — file only
-
-## Config file
+- Default: off, so requests follow the macOS system proxy settings
+- UI: none
 
 ```json
 {
@@ -18,25 +16,24 @@ OpenUsage can route all provider requests through an optional proxy.
 }
 ```
 
-Authenticated proxies put credentials in the URL:
+- Default ports: 1080 for `socks5`, 80 for `http`, 443 for `https`. With `https`, the connection to
+  the proxy uses TLS.
+- For a proxy sign-in, put it in the URL: `http://user:pass@proxy.example.com:8080`. Percent-encode an
+  `@` or `:` inside the user name or password. Any app you run can read the file.
+- OpenUsage reads the file once per launch. Quit and reopen it after a change.
+- It logs `proxy on` with the scheme, host, and port, or a `proxy off` error that says what to fix.
+  An unreadable file leaves proxying off. Neither line shows the password. See
+  [Debugging](debugging.md):
 
-```json
-{
-  "proxy": {
-    "enabled": true,
-    "url": "http://user:pass@proxy.example.com:8080"
-  }
-}
-```
+  ```sh
+  log show --last 1h --predicate 'subsystem == "OpenUsage" AND category == "config"'
+  ```
 
-When the URL has no port, the scheme's default applies (socks5 → 1080, http → 80, https → 443).
+## What goes through the proxy
 
-## Behavior
+Every provider request, sign-in token exchanges included, and requests to a
+[CLIProxyAPI hub](cliproxyapi.md). These don't:
 
-- The config is read once at launch — **restart OpenUsage after changing the file**.
-- `localhost`, `127.0.0.1`, and `::1` always bypass the proxy (the [local HTTP API](local-http-api.md) is unaffected).
-- A missing, disabled, invalid, or unreadable config simply leaves proxying off.
-
-## Scope
-
-Applies to provider HTTP requests made by the app, including the daily [model pricing](pricing.md) refresh. It is not a system-wide proxy.
+- The sign-in page and its `localhost` callback, which use your browser's proxy settings.
+- [Update](updates.md) checks and the telemetry in [Privacy](privacy.md), which follow the macOS system
+  proxy settings.

@@ -12,9 +12,75 @@ import SwiftUI
 /// whose `canBecomeKey` is `true` becomes key the instant it's ordered front, *without* activating the
 /// app, so keyboard input (Esc/Return navigation, the Settings shortcut recorder) works on the first
 /// try. (The pattern keyboard-first menu-bar apps use; cross-checked via GitHits.)
-final class MenuBarPanel: NSPanel {
+class MenuBarPanel: NSPanel {
+    static let cornerRadius: CGFloat = 20
+
+    /// A clear, borderless panel whose frame view is clipped to the rounded shape. The clip lives on
+    /// the frame view, not the content view: AppKit inserts a sheet's dimming view as the content
+    /// view's sibling, so only the frame view's mask keeps it inside the rounded corners.
+    init(contentRect: NSRect) {
+        super.init(
+            contentRect: contentRect,
+            styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        isOpaque = false
+        backgroundColor = .clear
+        guard let frameView = contentView?.superview else { return }
+        frameView.wantsLayer = true
+        frameView.layer?.cornerRadius = Self.cornerRadius
+        frameView.layer?.cornerCurve = .continuous
+        frameView.layer?.masksToBounds = true
+    }
+
+    var onDismiss: (() -> Void)?
+
+    /// Hosts the dashboard one level below the content view. Under the SwiftUI App lifecycle a hosting
+    /// view that is its window's content view resizes the window to its root size on every layout,
+    /// whatever its `sizingOptions` (`animatesWindowRootSize`), which fought `PanelHeightController` for
+    /// the frame until AppKit threw "more Update Constraints in Window passes than there are views".
+    func host(_ view: NSHostingView<some View>) {
+        guard let contentView else { return }
+        view.sizingOptions = []
+        view.layerContentsRedrawPolicy = .duringViewResize
+        view.frame = contentView.bounds
+        view.autoresizingMask = [.width, .height]
+        contentView.addSubview(view)
+    }
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+
+    /// A click on the panel while it isn't key (the app deactivated, or a menu or popover took key)
+    /// makes it key first. Otherwise AppKit spends the click on making the panel key and the view under
+    /// the pointer never sees it, so a double-click on a name reads as one click and opens no rename.
+    override func sendEvent(_ event: NSEvent) {
+        if !isKeyWindow, attachedSheet == nil,
+           [.leftMouseDown, .rightMouseDown, .otherMouseDown].contains(event.type) {
+            makeKey()
+        }
+        super.sendEvent(event)
+    }
+
+    /// Settings stays mounted offscreen after its first visit, where its shortcut recorder is disabled.
+    /// A disabled recorder still accepts focus, and then records the next key press as the global
+    /// shortcut, so the panel refuses to focus it.
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool {
+        if let recorder = responder as? KeyboardShortcuts.RecorderCocoa, !recorder.isEnabled { return false }
+        return super.makeFirstResponder(responder)
+    }
+
+    /// Drops keyboard focus inside the panel so a clicked plain-styled control (a metric row's
+    /// Used/Left + reset toggles) doesn't keep the system focus ring lingering as a stray outline:
+    /// AppKit leaves the control first responder until focus moves, which a click on empty space or a
+    /// close otherwise never does. Skips a live text field, whose focus is the user's intent, but not the
+    /// shortcut recorder: AppKit can focus it without a click, and then it records the next key press.
+    func clearStrayFocus() {
+        let recording = (firstResponder as? NSTextView)?.delegate is KeyboardShortcuts.RecorderCocoa
+        guard recording || !(firstResponder is NSText) else { return }
+        makeFirstResponder(nil)
+    }
 }
 
 /// Owns the menu-bar status item and the panel that shows the dashboard.
@@ -26,100 +92,78 @@ final class MenuBarPanel: NSPanel {
 @MainActor
 final class StatusItemController: NSObject {
     private let container: AppContainer
+    private let updater: UpdaterController
     private let statusItem: NSStatusItem
-    /// Owns the menu-bar strip render loop. Its apply closure captures the `NSStatusItem` directly
-    /// (which never retains the controller), so this can be a plain non-optional `let`.
-    private let imageUpdater: StatusItemImageUpdater
+    private var stripGate = StripGate()
+    private var rankingTick: Task<Void, Never>?
     private let panel: MenuBarPanel
     private let heightController: PanelHeightController
     private lazy var outsideClickMonitor = PanelOutsideClickMonitor(
         panel: panel,
         statusItem: statusItem,
         isMorphing: { [weak self] in self?.heightController.isMorphing ?? false },
-        onInsidePanelClick: { [weak self] in self?.clearStrayFocus() },
+        onInsidePanelClick: { [weak self] in self?.panel.clearStrayFocus() },
         onDismiss: { [weak self] in self?.hidePanel() }
     )
-    private let hostingController: NSHostingController<AnyView>
-    /// The panel's backdrop: an opaque tray by default, swapped to a behind-window vibrancy view when
-    /// the transparency style is non-opaque. Built once and toggled, so it can't race the style observer.
-    private let backdrop = PopoverBackdropView(cornerRadius: StatusItemController.cornerRadius)
-    /// Token for the appearance-change observer; held to follow the documented removal pattern.
-    private var appearanceObserver: NSObjectProtocol?
-    /// Corner radius of the panel surface; tuned to read like a system menu-bar popover.
-    private static let cornerRadius: CGFloat = 13
+    private let host: NSHostingView<AnyView>
 
     init(container: AppContainer, updater: UpdaterController) {
         self.container = container
+        self.updater = updater
         let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.statusItem = statusItem
-        // Captures the status item, not `self` — no retain cycle, and no optional property just to
-        // work around `[weak self]` being unavailable before `super.init()`. The button is resolved
-        // lazily at each apply, so a not-yet-configured button is harmless (same as before the split).
-        self.imageUpdater = StatusItemImageUpdater(container: container) { image in
-            statusItem.button?.image = image
-        }
 
-        let hosting = NSHostingController(
+        let host = NSHostingView(
             rootView: AnyView(
                 DashboardView()
-                    // Own the preference outside `DashboardView` so the view can read the resolved
-                    // value while deciding whether to mount its two-page transition structure.
                     .reduceAnimationsWhenRequested()
                     .environment(container)
                     .environment(container.layout)
                     .environment(container.dataStore)
-                    .environment(container.transparency)
+                    .environment(container.renaming)
+                    .environment(container.popover)
                     .environment(updater)
-                    .environment(\.resetClaims, container.resetClaims)
             )
         )
-        // The host view fills the panel. SwiftUI measures each screen and drives the panel height;
-        // content scrolls only when that height reaches the available-screen limit.
-        self.hostingController = hosting
+        self.host = host
 
-        let panel = MenuBarPanel(
-            contentRect: NSRect(
-                x: 0,
-                y: 0,
-                width: PanelHeightController.panelWidth,
-                height: PanelHeightController.defaultHeight
-            ),
-            styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
+        let panel = MenuBarPanel(contentRect: NSRect(
+            x: 0,
+            y: 0,
+            width: PanelMetrics.width,
+            height: PanelHeightController.defaultHeight
+        ))
         self.panel = panel
-        self.heightController = PanelHeightController(panel: panel) { container.layout.screen }
+        self.heightController = PanelHeightController(
+            panel: panel,
+            currentScreen: { container.popover.screen },
+            currentTab: { container.popover.dashboardTab }
+        )
 
         super.init()
 
         configurePanel()
         configureStatusItem()
-        imageUpdater.update()
-        applyTransparency()
+        updateImage()
 
-        appearanceObserver = NotificationCenter.default.addObserver(
-            forName: AppearanceSetting.didChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.panel.appearance = AppearanceSetting.current.nsAppearance
-            }
-        }
-        // Registered once here; the controller lives for the app's whole life.
         KeyboardShortcuts.onKeyUp(for: .togglePopover) { [weak self] in
             AppLog.info(.statusItem, "Global shortcut fired; toggling popover")
             self?.togglePopover()
         }
 
-        // Esc on the dashboard dismisses through the same code path as a status-item click.
-        MenuBarPopover.dismissHandler = { [weak self] in
+        panel.onDismiss = { [weak self] in
             self?.hidePanel()
         }
-        MenuBarPopover.showHandler = { [weak self] in
-            self?.container.layout.screen = .dashboard
-            self?.showPopover()
+        AppNotifications.shared.registerAsDelegate { [weak self] in
+            guard let self else { return }
+            container.popover.screen = .dashboard
+            if panel.isVisible {
+                container.popover.dashboardTab = .allUsage
+                panel.makeKeyAndOrderFront(nil)
+                statusItem.button?.highlight(true)
+            } else {
+                showPanel(dashboardTab: .allUsage)
+            }
         }
 
         heightController.installBridge()
@@ -127,116 +171,76 @@ final class StatusItemController: NSObject {
         AppLog.info(.statusItem, "Status item ready (button: \(self.statusItem.button != nil), shortcut: \(KeyboardShortcuts.getShortcut(for: .togglePopover)?.description ?? "none"))")
     }
 
-    // MARK: - Panel configuration
-
     private func configurePanel() {
         panel.level = .popUpMenu
         panel.hidesOnDeactivate = false
         panel.hasShadow = true
         panel.isMovable = false
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
         panel.animationBehavior = .none
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        // Pin the theme override (nil for System) so the menu bar's appearance doesn't win; tracked
-        // live by `appearanceObserver`.
-        panel.appearance = AppearanceSetting.current.nsAppearance
 
-        let container = NSView()
-
-        // Backdrop: by default an opaque tray so the data region never shows the desktop through it
-        // (Liquid Glass stays reserved for the footer chrome, rendered in-window over this backing). The
-        // `PopoverBackdropView` also holds a behind-window vibrancy layer that the transparency style
-        // swaps in for Increase Transparency / the secret-code egg. It fills the whole window, so a
-        // screen-switch resize can't reveal a transparent strip, and any region SwiftUI leaves unpainted
-        // shows the backdrop, not a raw hole. Its opaque tray is `Theme.trayNSColor` (tracks light/dark
-        // and the forced appearance override) matching the SwiftUI tray (`DashboardView.PopoverSurface`),
-        // rounded via `cornerRadius`. `panel.appearance` (tracked by `appearanceObserver`) pins the mode.
-        let host = hostingController.view
-        host.translatesAutoresizingMaskIntoConstraints = false
-        host.wantsLayer = true
-        // Redraw the SwiftUI content on every step of a height change instead of stretching the layer's
-        // cached contents (the default `.onSetNeedsDisplay`), which keeps cards steady during a morph.
-        host.layerContentsRedrawPolicy = .duringViewResize
-        host.layer?.cornerRadius = Self.cornerRadius
-        host.layer?.cornerCurve = .continuous
-        host.layer?.masksToBounds = true
-
-        container.addSubview(backdrop)
-        container.addSubview(host, positioned: .above, relativeTo: backdrop)
-        NSLayoutConstraint.activate([
-            backdrop.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            backdrop.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            backdrop.topAnchor.constraint(equalTo: container.topAnchor),
-            backdrop.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            host.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            host.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            host.topAnchor.constraint(equalTo: container.topAnchor),
-            host.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
-
-        // A plain container VC owns the backdrop; the hosting controller is its child so SwiftUI gets
-        // a proper view-controller hierarchy. Panel placement and height live in `heightController`.
-        let rootVC = NSViewController()
-        rootVC.view = container
-        rootVC.addChild(hostingController)
-        panel.contentViewController = rootVC
+        panel.host(host)
     }
 
     private func configureStatusItem() {
         guard let button = statusItem.button else { return }
         button.target = self
         button.action = #selector(statusButtonClicked)
-        // Left-click toggles the popover; right-click (or control-click) drops the context menu.
-        // Both arrive through `statusButtonClicked`, which branches on the triggering event.
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
     }
 
-    // MARK: - Transparency
+    /// Shows a strip only when its content changed: setting even an identical image costs a full
+    /// status-item redraw through WindowServer on macOS 26+.
+    struct StripGate {
+        private var shown: MenuBarContent?
 
-    /// True once the launch application has run, so subsequent style changes animate (the first one
-    /// shouldn't fade in from nothing).
-    private var hasAppliedTransparency = false
-
-    /// Applies the resolved transparency style to the panel and re-arms on the next change. Mirrors
-    /// `StatusItemImageUpdater.update()`'s `withObservationTracking` re-arm (its `onChange` is
-    /// one-shot). Reads the
-    /// store's `effectiveStyle`, which folds in the persisted toggle, the egg state, and the system
-    /// accessibility flags — so this fires whenever any of them changes. Backdrop already exists (it's a
-    /// stored property), so the first call from `init` safely sets the initial look.
-    ///
-    /// On every change after launch the window alpha and the backdrop crossfade ease together in one
-    /// ~0.55s group, matching the SwiftUI side (`tooMuchTransparency`'s `.animation`), so toggling the
-    /// egg or Increase Transparency fades in and out instead of snapping.
-    private func applyTransparency() {
-        let style = withObservationTracking {
-            container.transparency.effectiveStyle
-        } onChange: { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.applyTransparency()
-            }
+        mutating func show(_ content: MenuBarContent, using show: (MenuBarContent) -> Void) {
+            guard content != shown else { return }
+            shown = content
+            show(content)
         }
-        let mode: PopoverBackdropView.Mode = style.surfaceTreatment == .opaque ? .opaque : .translucent
-        let shouldAnimate = hasAppliedTransparency && !ReduceAnimationsSetting.isEnabled
-        hasAppliedTransparency = true
-        if shouldAnimate {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.55
-                context.allowsImplicitAnimation = true
-                panel.animator().alphaValue = style.windowAlpha
-                backdrop.setMode(mode, animated: true)
-            }
-        } else {
-            panel.alphaValue = style.windowAlpha
-            backdrop.setMode(mode, animated: false)
-        }
-        // Shadow isn't animatable; set it directly (the crossfade masks the change).
-        panel.hasShadow = style.wantsShadow
-        panel.invalidateShadow()
     }
 
-    // MARK: - Show / hide
+    private func updateImage() {
+        let (accounts, pinned, burningFast, useItOrLoseIt, limit, alwaysShows, updateAvailable) = withObservationTracking {
+            let limit = container.hideFromScreenShare.isConcealing ? .iconOnly : container.dataStore.menuBarLimit
+            let accounts = limit == .iconOnly ? [] : container.dataStore.accounts(in: container.layout.displayGroups)
+            return (accounts, container.layout.state.priorityPinIDs, container.dataStore.burningFast, container.dataStore.showsUseItOrLoseIt,
+                    limit, container.dataStore.menuBarAlwaysShows, updater.availableUpdateVersion != nil)
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(50))
+                self?.updateImage()
+            }
+        }
+        rankingTick?.cancel()
+        showStrip(accounts: accounts, pinned: pinned, burningFast: burningFast, useItOrLoseIt: useItOrLoseIt, limit: limit,
+                  alwaysShows: alwaysShows, updateAvailable: updateAvailable)
+    }
+
+    private func showStrip(
+        accounts: [DashboardAccount], pinned: Set<String>, burningFast: BurningFast?, useItOrLoseIt: Bool, limit: MenuBarLimit,
+        alwaysShows: Bool, updateAvailable: Bool
+    ) {
+        let now = Date()
+        let board = PriorityBoard.make(accounts: accounts, pinned: pinned, burningFast: burningFast, useItOrLoseIt: useItOrLoseIt, now: now)
+        var content = MenuBarContentBuilder.build(board: board, limit: limit, alwaysShows: alwaysShows)
+        content.updateAvailable = updateAvailable
+        stripGate.show(content) { content in
+            statusItem.button?.image = MenuBarStripRenderer.image(for: content)
+                ?? MenuBarStripRenderer.appIcon
+        }
+        // The pace order can change between provider reads. A tick only reuses the current data;
+        // registering another observation here would multiply subscriptions on every tick.
+        guard board.requiresRankingClock(at: now) else { return }
+        rankingTick = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(30), tolerance: .seconds(1))
+            guard !Task.isCancelled else { return }
+            self?.showStrip(accounts: accounts, pinned: pinned, burningFast: burningFast, useItOrLoseIt: useItOrLoseIt, limit: limit,
+                            alwaysShows: alwaysShows, updateAvailable: updateAvailable)
+        }
+    }
 
     @objc private func statusButtonClicked() {
         let event = NSApp.currentEvent
@@ -254,9 +258,6 @@ final class StatusItemController: NSObject {
     /// `statusItem.menu` for the span of one `performClick` shows the menu anchored under the item and
     /// highlights the button, then clearing it restores the left-click toggle behavior.
     private func showContextMenu() {
-        // The context menu is a distinct gesture from the left-click popover: close an open panel
-        // first so the menu opens over a clean state (no leftover button highlight, no live
-        // outside-click monitors racing the menu's own modal tracking).
         if panel.isVisible { hidePanel() }
 
         let menu = NSMenu()
@@ -273,10 +274,8 @@ final class StatusItemController: NSObject {
         statusItem.menu = nil
     }
 
-    /// Opens the dashboard popover on the Settings screen — Settings is an in-popover screen, not a
-    /// separate window. The screen is set before showing the panel so it opens already sized to Settings.
     private func openSettings() {
-        container.layout.screen = .settings
+        container.popover.screen = .settings
         if !panel.isVisible {
             showPanel()
         }
@@ -290,80 +289,34 @@ final class StatusItemController: NSObject {
         }
     }
 
-    /// Opens the dashboard panel without toggling it shut when already visible — used when an external
-    /// trigger (a tapped pace notification) should surface the popover.
-    func showPopover() {
-        if panel.isVisible {
-            panel.makeKeyAndOrderFront(nil)
-            statusItem.button?.highlight(true)
-            return
-        }
-        showPanel()
-    }
-
-    private func showPanel() {
+    private func showPanel(dashboardTab: DashboardTab = .preferred()) {
         guard let button = statusItem.button, let buttonWindow = button.window else {
             AppLog.error(.statusItem, "Cannot show panel: status item has no button")
             return
         }
         let buttonRectOnScreen = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
-        // Record the display before changing the visibility signal. That signal makes SwiftUI
-        // immediately clamp the measured height; without the display anchor the clamp falls back to
-        // the fixed opening guess, making large and small displays open at the same height.
-        heightController.prepareForOpening(below: buttonRectOnScreen)
-        // Mark the popover on-screen before laying out, so the egg's animation loops mount their
-        // `TimelineView` clocks in time for the first displayed frame. Read by the SwiftUI egg via
-        // `\.popoverIsVisible`; a closed popover keeps the loops unmounted, so a left-on egg costs no CPU.
-        container.transparency.setPopoverShown(true)
+        heightController.prepareForOpening(below: buttonRectOnScreen, tab: dashboardTab)
+        container.popover.show(dashboardTab: dashboardTab)
 
-        // Lay the content out first so the panel opens at the right size (no first-frame flash).
-        hostingController.view.layoutSubtreeIfNeeded()
+        host.layoutSubtreeIfNeeded()
 
-        // `canBecomeKey` + `.nonactivatingPanel` makes this key without activating the app — no
-        // activation race, so the dashboard receives keys on the first try.
         panel.makeKeyAndOrderFront(nil)
-        // Becoming key, AppKit auto-focuses the first control in the key-view loop (the first row's
-        // Used/Left toggle) when system Keyboard Navigation is on — so the popover would open with a
-        // stray focus ring nobody asked for. Drop it; keyboard nav still works (it rides a local key
-        // monitor, not first responder), and Tab from here focuses the first control as expected.
-        clearStrayFocus()
+        panel.clearStrayFocus()
         button.highlight(true)
         outsideClickMonitor.start()
     }
 
     private func hidePanel() {
-        // The popover's SwiftUI tree survives `orderOut`, so a tooltip the cursor was resting on gets
-        // no hover-exit and would orphan on screen — clear it here, the one chokepoint every close hits.
-        // The Usage Trend hover popover is on the same survives-orderOut footing, so dismiss it too.
         HoverTooltips.dismissAll()
         HoverPopoverState.dismissAll()
         ReducedMotionPopoverController.dismissAll()
-        // Same survival problem for keyboard focus: a clicked plain-styled control (a row's Used/Left
-        // or reset toggle) stays first responder, so its focus ring would reopen with the popover as a
-        // stray blue outline. Drop it on close so every reopen starts unfocused.
-        clearStrayFocus()
-        // Save while the closing screen is still current; the authoritative SwiftUI close reset runs
-        // afterward.
+        panel.clearStrayFocus()
         heightController.saveBeforeClosing()
-        // Closing: drop the on-screen flag so the egg's animation loops unmount their `TimelineView`
-        // clocks and stop ticking — the whole point of the gate (no CPU while the egg is left on but the
-        // popover is hidden). This is the authoritative hide signal, flipped synchronously with `orderOut`.
-        container.transparency.setPopoverShown(false)
+        container.popover.popoverShown = false
         panel.orderOut(nil)
         outsideClickMonitor.stop()
         statusItem.button?.highlight(false)
         heightController.finishClosing()
-    }
-
-    /// Drops keyboard focus inside the panel so a clicked plain-styled control (a metric row's
-    /// Used/Left + reset toggles) doesn't keep the system focus ring lingering as a stray outline:
-    /// AppKit leaves the control first responder until focus moves, which a click on empty space or a
-    /// close otherwise never does. Skips a live text field / shortcut recorder, whose focus is the
-    /// user's intent — mirrors the `NSText` guard `PopoverKeyReader` uses for the same reason.
-    private func clearStrayFocus() {
-        guard !ShortcutRecorderField.isRecordingActive,
-              !(panel.firstResponder is NSText) else { return }
-        panel.makeFirstResponder(nil)
     }
 
 }

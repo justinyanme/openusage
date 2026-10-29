@@ -3,256 +3,115 @@ import XCTest
 
 @MainActor
 final class UsageReaderTests: XCTestCase {
-    private final class StubProvider: ProviderRuntime {
-        let provider: Provider
-        var widgetDescriptors: [WidgetDescriptor] {
-            [WidgetDescriptor.percent(id: "\(provider.id).weekly", provider: provider, title: "Weekly")
-                .exportingLimit("weekly", unit: "percent")
-                .exportingHistory(scope: .machineLocal, estimatedCost: true, sourceNote: "Test history")]
+    private func cache(_ snapshot: ProviderSnapshot, in defaults: UserDefaults) {
+        let cache = ProviderSnapshotCache(userDefaults: defaults)
+        cache.save(cache.load().merging([snapshot.providerID: snapshot]) { $1 })
+    }
+
+    private func weekly(_ account: Account, used: Double, refreshedAt: Date = Date()) -> ProviderSnapshot {
+        ProviderSnapshot(
+            providerID: account.cardID,
+            displayName: account.kind.displayName,
+            lines: [.progress(label: "Weekly", used: used, limit: 100, format: .percent)],
+            refreshedAt: refreshedAt
+        )
+    }
+
+    private func providers(in result: UsageReadResult) throws -> [String: [String: Any]] {
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: result.data) as? [String: Any])
+        return try XCTUnwrap(root["providers"] as? [String: [String: Any]])
+    }
+
+    func testPrintsEveryCachedAccountFromTheAppDomain() throws {
+        let defaults = isolatedDefaults()
+        let store = AccountStore(defaults: defaults, vault: InMemoryCredentialVault())
+        let codex = store.add(kind: .codex, label: "Work", credential: .apiKey("k"))
+        let claude = store.add(kind: .claude, label: "Claude", credential: .apiKey("k"))
+        store.add(kind: .codex, label: "Home", credential: .apiKey("k"))
+        cache(weekly(codex, used: 20), in: defaults)
+        cache(weekly(claude, used: 30), in: defaults)
+
+        let result = try UsageReader.read(defaults)
+        let providers = try providers(in: result)
+
+        XCTAssertTrue(result.hasSnapshots)
+        XCTAssertEqual(Set(providers.keys), [codex.cardID, claude.cardID])
+        let resources = try XCTUnwrap(providers[codex.cardID]?["resources"] as? [String: Any])
+        XCTAssertEqual((resources["weekly"] as? [String: Any])?["used"] as? Double, 20)
+        XCTAssertEqual(providers[codex.cardID]?["displayName"] as? String, "ChatGPT · Work")
+    }
+
+    func testProviderKindNamesEveryAccountOfThatKindAndCardIDNamesOne() throws {
+        let defaults = isolatedDefaults()
+        let store = AccountStore(defaults: defaults, vault: InMemoryCredentialVault())
+        let first = store.add(kind: .codex, label: "Work", credential: .apiKey("k"))
+        let second = store.add(kind: .codex, label: "Home", credential: .apiKey("k"))
+        let claude = store.add(kind: .claude, label: "Claude", credential: .apiKey("k"))
+        for account in [first, second, claude] {
+            cache(weekly(account, used: 10), in: defaults)
         }
-        var refreshCount = 0
-        var refreshError: String?
-        var refreshedAt = Date()
 
-        init(id: String = "stub") {
-            self.provider = Provider(id: id, displayName: id.capitalized, icon: .providerMark(id))
-        }
+        XCTAssertEqual(Set(try providers(in: UsageReader.read(defaults, providerID: "codex")).keys), [first.cardID, second.cardID])
+        XCTAssertEqual(Set(try providers(in: UsageReader.read(defaults, providerID: "Codex")).keys), [first.cardID, second.cardID])
+        XCTAssertEqual(Set(try providers(in: UsageReader.read(defaults, providerID: second.cardID)).keys), [second.cardID])
+        XCTAssertEqual(Set(try providers(in: UsageReader.read(defaults, providerID: "claude")).keys), [claude.cardID])
+    }
 
-        func hasLocalCredentials() async -> Bool { true }
+    func testAnAccountIsStaleOnlyOnceTheAppShowsItsValuesAsOld() throws {
+        let defaults = isolatedDefaults()
+        let store = AccountStore(defaults: defaults, vault: InMemoryCredentialVault())
+        let recent = store.add(kind: .claude, label: "Recent", credential: .apiKey("k"))
+        let old = store.add(kind: .claude, label: "Old", credential: .apiKey("k"))
+        let now = Date()
+        cache(weekly(recent, used: 10, refreshedAt: now.addingTimeInterval(-6 * 60)), in: defaults)
+        cache(weekly(old, used: 10, refreshedAt: now.addingTimeInterval(-11 * 60)), in: defaults)
 
-        func refresh() async -> ProviderSnapshot {
-            refreshCount += 1
-            if let refreshError {
-                return .error(provider: provider, message: refreshError)
+        let providers = try providers(in: UsageReader.read(defaults))
+
+        XCTAssertEqual(providers[recent.cardID]?["stale"] as? Bool, false, "refreshed 6 minutes ago")
+        XCTAssertEqual(providers[old.cardID]?["stale"] as? Bool, true, "refreshed 11 minutes ago")
+        let app = WidgetDataStore.forTesting([], defaults: defaults, now: { now })
+        app.snapshots = ProviderSnapshotCache(userDefaults: defaults).load()
+        XCTAssertNil(app.stalenessHint(for: recent.cardID))
+        XCTAssertNotNil(app.stalenessHint(for: old.cardID))
+    }
+
+    func testUnknownProviderThrowsEvenWhenNothingIsCached() {
+        let defaults = isolatedDefaults()
+        let store = AccountStore(defaults: defaults, vault: InMemoryCredentialVault())
+        store.add(kind: .codex, label: "Work", credential: .apiKey("k"))
+
+        XCTAssertThrowsError(try UsageReader.read(defaults, providerID: "cursor")) { error in
+            guard case UsageReaderError.unknownProvider(let token) = error else {
+                return XCTFail("unexpected error \(error)")
             }
-            return ProviderSnapshot(
-                providerID: provider.id,
-                displayName: provider.displayName,
-                lines: [.progress(label: "Weekly", used: 20, limit: 100, format: .percent)],
-                refreshedAt: refreshedAt,
-                usageHistory: ProviderUsageHistory(series: DailyUsageSeries(daily: [
-                    DailyUsageEntry(
-                        date: DailyUsageAccumulator.dayKey(from: refreshedAt),
-                        totalTokens: 123,
-                        costUSD: 0.45
-                    )
-                ]))
-            )
+            XCTAssertEqual(token, "cursor")
         }
+        XCTAssertThrowsError(try UsageReader.read(defaults, providerID: "codex@00000000"))
     }
 
-    private func defaults() -> UserDefaults {
-        let suite = "UsageReaderTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defaults.removePersistentDomain(forName: suite)
-        return defaults
+    func testAnEntryThisBuildCannotReadLeavesTheOtherAccountsReadable() throws {
+        let defaults = isolatedDefaults()
+        defaults.set(StoredAccountList.data, forKey: AccountStore.storageKey)
+        cache(weekly(StoredAccountList.claude, used: 20), in: defaults)
+
+        let result = try UsageReader.read(defaults)
+
+        XCTAssertEqual(Set(try providers(in: result).keys), [StoredAccountList.claude.cardID])
     }
 
-    func testReadsSharedSnapshotCacheWithoutRefreshing() async throws {
-        let defaults = defaults()
-        let provider = StubProvider()
-        ProviderSnapshotCache(userDefaults: defaults).store(await provider.refresh())
-        provider.refreshCount = 0
+    func testNothingFetchedYetPrintsTheEmptyEnvelope() throws {
+        let defaults = isolatedDefaults()
+        let empty = try UsageReader.read(defaults)
+        XCTAssertFalse(empty.hasSnapshots)
+        XCTAssertTrue(try providers(in: empty).isEmpty)
 
-        let result = try await UsageReader(userDefaults: defaults, providers: [provider]).read(providerID: "stub")
-        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: result.data) as? [String: Any])
-
-        XCTAssertNotNil((object["providers"] as? [String: Any])?["stub"])
-        XCTAssertEqual(provider.refreshCount, 0)
-        XCTAssertTrue(result.warnings.isEmpty)
+        let store = AccountStore(defaults: defaults, vault: InMemoryCredentialVault())
+        store.add(kind: .codex, label: "Work", credential: .apiKey("k"))
+        let unfetched = try UsageReader.read(defaults, providerID: "codex")
+        XCTAssertFalse(unfetched.hasSnapshots)
+        XCTAssertTrue(try providers(in: unfetched).isEmpty)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: unfetched.data) as? [String: Any])
+        XCTAssertEqual(root["schema"] as? String, "openusage.limits.v2")
     }
-
-    func testForceUsesSharedProviderAndStoresResult() async throws {
-        let defaults = defaults()
-        let provider = StubProvider()
-        let reader = UsageReader(userDefaults: defaults, providers: [provider])
-
-        let result = try await reader.read(providerID: "stub", force: true)
-        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: result.data) as? [String: Any])
-        let cached = ProviderSnapshotCache(userDefaults: defaults).loadSnapshots(providerIDs: ["stub"])
-
-        XCTAssertEqual(provider.refreshCount, 1)
-        XCTAssertNotNil((object["providers"] as? [String: Any])?["stub"])
-        XCTAssertEqual(cached["stub"]?.line(label: "Weekly"), .progress(
-            label: "Weekly", used: 20, limit: 100, format: .percent
-        ))
-    }
-
-    func testRefreshAllPersistsSnapshotsBeforeOneShotReaderReturns() async throws {
-        let defaults = defaults()
-        defaults.set(["alpha", "beta"], forKey: "openusage.enabledProviders.v1")
-        let providers = [StubProvider(id: "alpha"), StubProvider(id: "beta")]
-
-        _ = try await UsageReader(userDefaults: defaults, providers: providers).read(force: true)
-
-        let persisted = ProviderSnapshotCache(userDefaults: defaults).loadSnapshots(providerIDs: ["alpha", "beta"])
-        XCTAssertEqual(Set(persisted.keys), Set(["alpha", "beta"]))
-    }
-
-    func testStalePersistedSnapshotRefreshesBeforeReading() async throws {
-        let defaults = defaults()
-        let provider = StubProvider()
-        provider.refreshedAt = Date().addingTimeInterval(-RefreshSetting.interval - 1)
-        ProviderSnapshotCache(userDefaults: defaults).store(await provider.refresh())
-        provider.refreshCount = 0
-        provider.refreshedAt = Date()
-
-        let result = try await UsageReader(userDefaults: defaults, providers: [provider]).read(providerID: "stub")
-        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: result.data) as? [String: Any])
-
-        XCTAssertNotNil((object["providers"] as? [String: Any])?["stub"])
-        XCTAssertEqual(provider.refreshCount, 1)
-    }
-
-    func testForcedProviderReadRefreshesOnlyRequestedProvider() async throws {
-        let defaults = defaults()
-        let requested = StubProvider(id: "requested")
-        let other = StubProvider(id: "other")
-
-        _ = try await UsageReader(userDefaults: defaults, providers: [requested, other])
-            .read(providerID: "requested", force: true)
-
-        XCTAssertEqual(requested.refreshCount, 1)
-        XCTAssertEqual(other.refreshCount, 0)
-    }
-
-    func testUnknownProviderFailsBeforeRefresh() async {
-        let defaults = defaults()
-        let provider = StubProvider()
-
-        do {
-            _ = try await UsageReader(userDefaults: defaults, providers: [provider]).read(providerID: "missing", force: true)
-            XCTFail("Expected unknown provider error")
-        } catch UsageReaderError.unknownProvider(let providerID) {
-            XCTAssertEqual(providerID, "missing")
-        } catch {
-            XCTFail("Unexpected error: \(error)")
-        }
-        XCTAssertEqual(provider.refreshCount, 0)
-    }
-
-    func testFailedForceWithoutCacheReturnsMachineReadableError() async throws {
-        let defaults = defaults()
-        let provider = StubProvider()
-        provider.refreshError = "Not logged in"
-
-        let result = try await UsageReader(userDefaults: defaults, providers: [provider])
-            .read(providerID: "stub", force: true)
-        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: result.data) as? [String: Any])
-        let errors = try XCTUnwrap(root["errors"] as? [[String: Any]])
-
-        XCTAssertEqual(result.warnings, ["stub: Not logged in"])
-        XCTAssertEqual(errors.first?["providerId"] as? String, "stub")
-        XCTAssertEqual(errors.first?["message"] as? String, "Not logged in")
-    }
-
-    func testSpendOutputUsesTheSameDiscoveryRefreshAndCachePath() async throws {
-        let defaults = defaults()
-        let provider = StubProvider()
-        provider.refreshedAt = Date()
-
-        let result = try await UsageReader(userDefaults: defaults, providers: [provider])
-            .read(providerID: "stub", force: true, output: .spend)
-        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: result.data) as? [String: Any])
-        let providerJSON = try XCTUnwrap((root["providers"] as? [String: Any])?["stub"] as? [String: Any])
-        let days = try XCTUnwrap(providerJSON["days"] as? [[String: Any]])
-
-        XCTAssertEqual(root["schema"] as? String, "openusage.spend.v1")
-        XCTAssertEqual(days.count, 30)
-        XCTAssertEqual(provider.refreshCount, 1)
-        XCTAssertEqual(((days.last?["total"] as? [String: Any])?["tokens"] as? Int), 123)
-    }
-
-    func testDefaultOutputRemainsLimits() async throws {
-        let defaults = defaults()
-        let provider = StubProvider()
-
-        let result = try await UsageReader(userDefaults: defaults, providers: [provider])
-            .read(providerID: "stub", force: true)
-        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: result.data) as? [String: Any])
-
-        XCTAssertEqual(root["schema"] as? String, "openusage.limits.v1")
-    }
-
-    func testSpendCLIBytesEqualHTTPRouterBytesForTheSameCapturedState() async throws {
-        let defaults = defaults()
-        let provider = StubProvider()
-        provider.refreshedAt = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
-        let cli = try await UsageReader(userDefaults: defaults, providers: [provider])
-            .read(force: true, output: .spend)
-        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: cli.data) as? [String: Any])
-        let generatedAtText = try XCTUnwrap(root["generatedAt"] as? String)
-        let generatedAt = try XCTUnwrap(OpenUsageISO8601.date(from: generatedAtText))
-        let snapshots = ProviderSnapshotCache(userDefaults: defaults)
-            .loadSnapshots(providerIDs: ["stub"])
-        let registry = WidgetRegistry.from([provider])
-        let state = LocalUsageAPI.State(
-            enabledOrderedIDs: ["stub"],
-            knownIDs: ["stub"],
-            snapshots: snapshots,
-            localSnapshots: snapshots,
-            limitDescriptors: registry.limitDescriptorsByProvider,
-            historyDescriptors: registry.historyDescriptorsByProvider,
-            generatedAt: generatedAt
-        )
-
-        let http = LocalUsageAPI.respond(method: "GET", path: "/v1/spend", state: state)
-
-        XCTAssertEqual(cli.data, try XCTUnwrap(http.body))
-    }
-
-    func testSpendReadMergesICloudPeerHistoryWithFreshCachedLocalHistory() async throws {
-        let defaults = defaults()
-        defaults.set(true, forKey: ICloudUsageSyncStore.enabledKey)
-        defaults.set(UUID().uuidString.lowercased(), forKey: ICloudUsageSyncStore.deviceIDKey)
-        let provider = StubProvider()
-        provider.refreshedAt = Date()
-        ProviderSnapshotCache(userDefaults: defaults).store(await provider.refresh())
-        provider.refreshCount = 0
-
-        let day = DailyUsageAccumulator.dayKey(from: provider.refreshedAt)
-        let peer = UsageHistoryDocument(
-            deviceID: UUID().uuidString.lowercased(),
-            deviceName: "Peer Mac",
-            updatedAt: provider.refreshedAt,
-            providers: [
-                "stub": ProviderUsageHistory(series: DailyUsageSeries(daily: [
-                    DailyUsageEntry(date: day, totalTokens: 456, costUSD: 0.55)
-                ]))
-            ]
-        )
-        let fileStore = StubHistoryFileStore(documents: [peer])
-
-        let result = try await UsageReader(
-            userDefaults: defaults,
-            providers: [provider],
-            historyFileStore: fileStore
-        ).read(providerID: "stub", output: .spend)
-        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: result.data) as? [String: Any])
-        let providerJSON = try XCTUnwrap((root["providers"] as? [String: Any])?["stub"] as? [String: Any])
-        let periods = try XCTUnwrap(providerJSON["periods"] as? [String: Any])
-        let today = try XCTUnwrap(periods["today"] as? [String: Any])
-        let total = try XCTUnwrap(today["total"] as? [String: Any])
-
-        XCTAssertEqual(provider.refreshCount, 0, "a fresh local cache must remain fresh while peers load")
-        XCTAssertEqual(total["tokens"] as? Int, 579)
-        XCTAssertEqual(total["costUSD"] as? Double, 1)
-        XCTAssertEqual(providerJSON["includesSyncedPeers"] as? Bool, true)
-        XCTAssertTrue(result.warnings.isEmpty)
-    }
-}
-
-private actor StubHistoryFileStore: UsageHistoryFileStoring {
-    let documents: [UsageHistoryDocument]
-
-    init(documents: [UsageHistoryDocument]) {
-        self.documents = documents
-    }
-
-    func loadDocuments() async throws -> UsageHistoryLoadResult {
-        UsageHistoryLoadResult(documents: documents, invalidFileMessages: [])
-    }
-
-    func write(_: UsageHistoryDocument) async throws {}
-    func delete(deviceID _: String) async throws {}
 }

@@ -1,10 +1,5 @@
 import Foundation
 
-/// Stable, machine-facing metadata for one resource exported by `/v1/limits`.
-///
-/// Providers still produce `MetricLine` once. This metadata only names the subset that is useful to
-/// programs and says how to select a scalar from an already-normalized line; presentation-only rows
-/// simply have no descriptor and therefore cannot leak into the limits contract.
 struct LimitResourceDescriptor: Hashable, Sendable {
     enum Kind: String, Hashable, Sendable, Encodable {
         case consumption
@@ -14,7 +9,6 @@ struct LimitResourceDescriptor: Hashable, Sendable {
     enum Source: Hashable, Sendable {
         case progress
         case value(kind: MetricKind, label: String? = nil)
-        /// A provider may report the same consumption as bounded progress or as an uncapped scalar.
         case progressOrValue(kind: MetricKind, label: String? = nil)
     }
 
@@ -22,26 +16,27 @@ struct LimitResourceDescriptor: Hashable, Sendable {
     let kind: Kind
     let unit: String
     let source: Source
-    var estimated = false
+
+    /// The figure of a values line this resource reads.
+    func value(in values: [MetricValue]) -> MetricValue? {
+        switch source {
+        case .progress:
+            nil
+        case .value(let kind, let label), .progressOrValue(let kind, let label):
+            values.first { $0.kind == kind && (label == nil || $0.label == label) }
+        }
+    }
 }
 
 extension WidgetDescriptor {
-    /// Adds one scalar to the public limits contract without changing the widget or provider mapper.
     func exportingLimit(
         _ key: String,
         kind: LimitResourceDescriptor.Kind = .consumption,
         unit: String,
-        source: LimitResourceDescriptor.Source = .progress,
-        estimated: Bool = false
+        source: LimitResourceDescriptor.Source = .progress
     ) -> WidgetDescriptor {
         var copy = self
-        copy.limitResources.append(LimitResourceDescriptor(
-            key: key,
-            kind: kind,
-            unit: unit,
-            source: source,
-            estimated: estimated
-        ))
+        copy.limitResources.append(LimitResourceDescriptor(key: key, kind: kind, unit: unit, source: source))
         return copy
     }
 }

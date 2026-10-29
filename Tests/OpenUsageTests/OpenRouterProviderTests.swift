@@ -1,329 +1,213 @@
 import XCTest
 @testable import OpenUsage
 
-final class OpenRouterAuthStoreTests: XCTestCase {
-    func testLoadsConfigFormatsBeforeEnvironmentAndSkipsBlankValues() {
-        let primary = OpenRouterAuthStore.configPaths[0]
-        let alternate = OpenRouterAuthStore.configPaths[1]
-        let cases: [(name: String, files: [String: String], environment: [String: String], expected: String)] = [
-            ("saved override", [primary: #"{"apiKey":"sk-or-file"}"#], ["OPENROUTER_API_KEY": "sk-or-env"], "sk-or-file"),
-            ("environment fallback", [:], ["OPENROUTER_API_KEY": "sk-or-env"], "sk-or-env"),
-            ("legacy JSON key", [primary: #"{"api_key":"sk-or-json"}"#], [:], "sk-or-json"),
-            ("trimmed plain text", [alternate: "  sk-or-plain\n"], [:], "sk-or-plain"),
-            ("blank config", [primary: "   "], ["OPENROUTER_API_KEY": "sk-or-env"], "sk-or-env")
-        ]
+/// `/api/v1/key`, `/api/v1/credits`, and `/api/v1/keys` shaped as OpenRouter's API reference documents them.
+enum OpenRouterFixtures {
+    static let managementKey = #"""
+    {"data":{"label":"sk-or-v1-0e6...1c96","limit":null,"limit_remaining":null,"limit_reset":null,
+    "include_byok_in_limit":false,"usage":0,"usage_daily":0,"usage_weekly":0,"usage_monthly":0,
+    "byok_usage":0,"byok_usage_daily":0,"byok_usage_weekly":0,"byok_usage_monthly":0,
+    "is_free_tier":false,"is_management_key":true,"is_provisioning_key":true}}
+    """#
+    static let standardKey = #"""
+    {"data":{"label":"sk-or-v1-au7...890","limit":100,"limit_remaining":74.5,"limit_reset":"monthly",
+    "include_byok_in_limit":false,"usage":25.5,"usage_daily":1.5,"usage_weekly":4,"usage_monthly":12,
+    "byok_usage":17.38,"byok_usage_daily":17.38,"byok_usage_weekly":17.38,"byok_usage_monthly":17.38,
+    "is_free_tier":false,"is_management_key":false,"is_provisioning_key":false,
+    "effective_budget":{"scope":"member","guardrail_id":"0df9e665-d932-5740-b2c7-b52af166bc11","budget_id":null,"limit_usd":50,
+    "spend_usd":32.5,"remaining_usd":17.5,"reset_interval":"weekly","resets_at":"2026-11-02T00:00:00.000Z","include_byok":false},
+    "free_model_daily_requests":{"used":12,"limit":50,"remaining":38}}}
+    """#
+    static let credits = #"{"data":{"total_credits":100,"total_usage":22.25}}"#
+    static let forbidden = #"{"error":{"code":403,"message":"Forbidden"}}"#
 
-        for entry in cases {
-            let store = OpenRouterAuthStore(files: FakeFiles(entry.files), environment: FakeEnvironment(entry.environment))
-            XCTAssertEqual(store.loadAPIKey()?.apiKey, entry.expected, entry.name)
+    static func keysPage(_ count: Int, daily: Double, weekly: Double, monthly: Double) -> String {
+        let key = """
+        {"hash":"f01d52606dc8f0a8303a7b5cc3fa07109c2e346cec7c0a16b40de462992ce943","name":"Agent",
+        "label":"sk-or-v1-0e6...1c96","disabled":false,"limit":null,"limit_remaining":null,"limit_reset":null,
+        "include_byok_in_limit":false,"usage":\(monthly),"usage_daily":\(daily),"usage_weekly":\(weekly),
+        "usage_monthly":\(monthly),"byok_usage":0,"byok_usage_daily":0,"byok_usage_weekly":0,"byok_usage_monthly":0,
+        "created_at":"2025-08-24T10:30:00Z","updated_at":"2025-08-24T15:45:00Z","expires_at":null}
+        """
+        return #"{"data":["# + Array(repeating: key, count: count).joined(separator: ",") + "]}"
+    }
+
+    static func managementAccount(_ request: HTTPRequest) -> HTTPResponse {
+        switch request.url.path() {
+        case "/api/v1/key": return response(200, managementKey)
+        case "/api/v1/credits": return response(200, credits)
+        case "/api/v1/keys" where offset(request) == "0": return response(200, keysPage(100, daily: 0.25, weekly: 0.5, monthly: 1))
+        case "/api/v1/keys" where offset(request) == "100": return response(200, keysPage(1, daily: 1.5, weekly: 4, monthly: 12))
+        case "/api/v1/activity": return OpenRouterUsageHistoryTests.activity(request)
+        default: return response(404)
         }
     }
 
-    func testReturnsNilWhenNoKeyAnywhere() {
-        let store = OpenRouterAuthStore(files: FakeFiles(), environment: FakeEnvironment())
-        XCTAssertNil(store.loadAPIKey())
+    static func offset(_ request: HTTPRequest) -> String? {
+        URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "offset" }?.value
     }
 
-    // MARK: - In-app save / delete / status (Customize → OpenRouter → API Key)
-
-    func testSaveAPIKeyWritesTrimmedJSONConfigFile() throws {
-        let files = FakeFiles()
-        let store = OpenRouterAuthStore(files: files, environment: FakeEnvironment())
-
-        try store.saveAPIKey("  sk-or-new  ")
-
-        // Sorted-keys JSON, trimmed key — the exact bytes the auth store round-trips.
-        XCTAssertEqual(files.files[OpenRouterAuthStore.configPaths[0]], #"{"apiKey":"sk-or-new"}"#)
-        XCTAssertEqual(store.loadAPIKey()?.apiKey, "sk-or-new")
-    }
-
-    func testSaveAPIKeyRejectsEmptyKey() {
-        let files = FakeFiles()
-        let store = OpenRouterAuthStore(files: files, environment: FakeEnvironment())
-
-        XCTAssertThrowsError(try store.saveAPIKey("   ")) { error in
-            XCTAssertEqual(error as? OpenRouterAuthError, .missingKey)
-        }
-        XCTAssertNil(files.files[OpenRouterAuthStore.configPaths[0]])
-    }
-
-    func testSavedKeyOverridesEnvironment() throws {
-        // Saving writes the config file, which the auth store checks before the env var — so the
-        // saved key wins and the status reports overrideActive.
-        let files = FakeFiles()
-        let store = OpenRouterAuthStore(files: files, environment: FakeEnvironment(["OPENROUTER_API_KEY": "sk-or-env"]))
-
-        try store.saveAPIKey("sk-or-saved")
-
-        XCTAssertEqual(store.loadAPIKey()?.apiKey, "sk-or-saved")
-        XCTAssertEqual(store.keyStatus(), .overrideActive)
-    }
-
-    func testKeyStatusReportsAllFourStates() {
-        let envKey = ["OPENROUTER_API_KEY": "sk-or-env"]
-        let file = [OpenRouterAuthStore.configPaths[0]: #"{"apiKey":"sk-or-file"}"#]
-
-        XCTAssertEqual(OpenRouterAuthStore(files: FakeFiles(), environment: FakeEnvironment()).keyStatus(), .notSet)
-        XCTAssertEqual(OpenRouterAuthStore(files: FakeFiles(), environment: FakeEnvironment(envKey)).keyStatus(), .fromEnvironment)
-        XCTAssertEqual(OpenRouterAuthStore(files: FakeFiles(file), environment: FakeEnvironment()).keyStatus(), .saved)
-        XCTAssertEqual(OpenRouterAuthStore(files: FakeFiles(file), environment: FakeEnvironment(envKey)).keyStatus(), .overrideActive)
-        XCTAssertEqual(OpenRouterAuthStore(files: FakeFiles(file),
-                                            environment: FakeEnvironment(["OPENROUTER_API_KEY": "sk-or-file"])).keyStatus(),
-                       .overrideActive)
-    }
-
-    func testCurrentAPIKeyReturnsEffectiveKey() {
-        let store = OpenRouterAuthStore(
-            files: FakeFiles([OpenRouterAuthStore.configPaths[0]: #"{"apiKey":"sk-or-file"}"#]),
-            environment: FakeEnvironment(["OPENROUTER_API_KEY": "sk-or-env"])
-        )
-        XCTAssertEqual(store.currentAPIKey(), "sk-or-file")
-    }
-
-    func testDeleteClearsPrimaryAndAlternatePathsWithEnvironmentFallback() throws {
-        let cases: [(paths: [Int], environment: [String: String])] = [
-            ([0], ["OPENROUTER_API_KEY": "sk-or-env"]),
-            ([0], [:]),
-            ([0, 1], [:]),
-            ([1], [:])
-        ]
-
-        for entry in cases {
-            let contents = Dictionary(uniqueKeysWithValues: entry.paths.map {
-                (OpenRouterAuthStore.configPaths[$0], $0 == 0 ? #"{"apiKey":"sk-or-primary"}"# : "sk-or-alt")
-            })
-            let files = FakeFiles(contents)
-            let store = OpenRouterAuthStore(files: files, environment: FakeEnvironment(entry.environment))
-
-            try store.deleteAPIKey()
-
-            for path in OpenRouterAuthStore.configPaths { XCTAssertNil(files.files[path], path) }
-            XCTAssertEqual(store.loadAPIKey()?.apiKey, entry.environment["OPENROUTER_API_KEY"])
-            XCTAssertEqual(store.keyStatus(), entry.environment.isEmpty ? .notSet : .fromEnvironment)
-        }
-    }
-
-    func testDeleteAPIKeyIsNoOpWhenFileMissing() throws {
-        // Removing a key that isn't there is the desired end state, not an error.
-        let store = OpenRouterAuthStore(files: FakeFiles(), environment: FakeEnvironment())
-        XCTAssertNoThrow(try store.deleteAPIKey())
-        XCTAssertEqual(store.keyStatus(), .notSet)
-    }
-
-}
-
-final class OpenRouterUsageMapperTests: XCTestCase {
-    func testCreditsLinesGiveMeterAndBalance() throws {
-        let lines = OpenRouterUsageMapper.creditsLines(from: ["total_credits": 277.47, "total_usage": 178.20])
-
-        let credits = try XCTUnwrap(progress(lines, "Credits"))
-        XCTAssertEqual(credits.used, 178.20, accuracy: 0.001)
-        XCTAssertEqual(credits.limit, 277.47, accuracy: 0.001)
-        XCTAssertEqual(try XCTUnwrap(dollars(lines, "Balance")), 99.27, accuracy: 0.001)
-    }
-
-    func testCreditsLinesEmptyWithoutUsableTotal() {
-        XCTAssertTrue(OpenRouterUsageMapper.creditsLines(from: ["foo": "bar"]).isEmpty)
-    }
-
-    func testNoCreditsMeterWhenNothingPurchased() {
-        let lines = OpenRouterUsageMapper.creditsLines(from: ["total_credits": 0, "total_usage": 0])
-
-        XCTAssertNil(progress(lines, "Credits"))
-        // Balance is still shown as a real, measured zero — not "No data".
-        XCTAssertEqual(dollars(lines, "Balance"), 0)
-    }
-
-    func testKeyMetricsGivePlanPeriodSpendAndCap() throws {
-        let mapped = OpenRouterUsageMapper.keyMetrics(from: [
-            "is_free_tier": false,
-            "usage_daily": 0,
-            "usage_weekly": 1.25,
-            "usage_monthly": 4.5,
-            "usage": 2,
-            "limit": 5,
-            "limit_remaining": 3
-        ])
-
-        XCTAssertEqual(mapped.plan, "Pay as you go")
-        // A real, measured zero is shown — not collapsed to "No data".
-        XCTAssertEqual(dollars(mapped.lines, "Today"), 0)
-        XCTAssertEqual(dollars(mapped.lines, "This Week"), 1.25)
-        XCTAssertEqual(dollars(mapped.lines, "This Month"), 4.5)
-        let keyLimit = try XCTUnwrap(progress(mapped.lines, "Key Limit"))
-        XCTAssertEqual(keyLimit.used, 2)
-        XCTAssertEqual(keyLimit.limit, 5)
-    }
-
-    func testKeyLimitUsesCurrentWindowNotLifetimeUsage() throws {
-        // After a daily/weekly/monthly reset, lifetime `usage` still includes prior windows.
-        // `limit_remaining` is the current window, so used is limit - remaining — not lifetime.
-        let mapped = OpenRouterUsageMapper.keyMetrics(from: [
-            "usage": 12,
-            "limit": 5,
-            "limit_remaining": 3
-        ])
-
-        let keyLimit = try XCTUnwrap(progress(mapped.lines, "Key Limit"))
-        XCTAssertEqual(keyLimit.used, 2)
-        XCTAssertEqual(keyLimit.limit, 5)
-    }
-
-    func testKeyMetricsOmitCapWhenUnset() {
-        let mapped = OpenRouterUsageMapper.keyMetrics(from: ["is_free_tier": true, "limit": NSNull()])
-
-        XCTAssertEqual(mapped.plan, "Free tier")
-        XCTAssertNil(progress(mapped.lines, "Key Limit"))
-    }
-
-    private func progress(_ lines: [MetricLine], _ label: String) -> (used: Double, limit: Double)? {
-        guard case .progress(_, let used, let limit, _, _, _, _) = lines.first(where: { $0.label == label }) else {
-            return nil
-        }
-        return (used, limit)
-    }
-
-    private func dollars(_ lines: [MetricLine], _ label: String) -> Double? {
-        guard case .values(_, let values, _, _, _, _) = lines.first(where: { $0.label == label }) else {
-            return nil
-        }
-        return values.first(where: { $0.kind == .dollars })?.number
+    static func response(_ status: Int, _ body: String = "") -> HTTPResponse {
+        HTTPResponse(statusCode: status, headers: [:], body: Data(body.utf8))
     }
 }
 
 @MainActor
 final class OpenRouterProviderTests: XCTestCase {
-    func testRefreshMapsBothEndpoints() async throws {
-        let provider = OpenRouterProvider(
-            authStore: makeAuthStore(key: "sk-or-test"),
-            usageClient: OpenRouterUsageClient(http: RoutingHTTPClient { request in
-                if request.url.absoluteString == OpenRouterUsageClient.creditsURL {
-                    XCTAssertEqual(request.headers["Authorization"], "Bearer sk-or-test")
-                    return jsonResponse(["data": ["total_credits": 100, "total_usage": 40]])
+    private static let now = ISO8601DateFormatter().date(from: "2026-10-29T11:00:00Z")!
+
+    private func runtime(_ handler: @escaping @Sendable (HTTPRequest) async throws -> HTTPResponse) throws
+        -> (AccountProviderRuntime, RoutingHTTPClient) {
+        let account = Account(kind: .openrouter, label: "Work")
+        let vault = InMemoryCredentialVault()
+        try vault.save(.apiKey("key"), for: account.id)
+        let http = RoutingHTTPClient(handler: handler)
+        return (AccountProviderRuntime(account: account, vault: vault, http: http, now: { Self.now }), http)
+    }
+
+    private func shownRows(_ snapshot: ProviderSnapshot, _ runtime: AccountProviderRuntime) -> [String] {
+        runtime.widgetDescriptors.filter { snapshot.line(label: $0.metricLabel) != nil }.map(\.key)
+    }
+
+    private func dollars(_ snapshot: ProviderSnapshot, _ label: String) -> Double? {
+        guard case .values(_, let values, _) = snapshot.line(label: label) else { return nil }
+        return values.first?.number
+    }
+
+    /// A standard key, and a Management key whose activity can't be read or is empty, each with nothing spent:
+    /// every range reads $0 with nothing beside it, and each popup has nothing to show.
+    func testAKeyThatSpentNothingShowsZeroDollarsAndNoBYOK() async throws {
+        let standard = OpenRouterFixtures.standardKey
+            .replacingOccurrences(of: #""usage_daily":1.5,"usage_weekly":4,"usage_monthly":12"#, with: #""usage_daily":0,"usage_weekly":0,"usage_monthly":0"#)
+            .replacingOccurrences(of: "17.38", with: "0")
+        let handlers: [@Sendable (HTTPRequest) async throws -> HTTPResponse] = [
+            { request in
+                request.url.path() == "/api/v1/key"
+                    ? OpenRouterFixtures.response(200, standard)
+                    : OpenRouterFixtures.response(403, OpenRouterFixtures.forbidden)
+            },
+            { request in
+                switch request.url.path() {
+                case "/api/v1/keys": OpenRouterFixtures.response(200, OpenRouterFixtures.keysPage(1, daily: 0, weekly: 0, monthly: 0))
+                case "/api/v1/activity": OpenRouterFixtures.response(500)
+                default: OpenRouterFixtures.managementAccount(request)
                 }
-                return jsonResponse(["data": ["is_free_tier": false, "usage_daily": 0.5]])
-            }),
-            now: { Date(timeIntervalSince1970: 1_800_000_000) }
-        )
-
-        let snapshot = await provider.refresh()
-
-        XCTAssertEqual(snapshot.plan, "Pay as you go")
-        XCTAssertNil(snapshot.errorCategory)
-        XCTAssertNotNil(snapshot.line(label: "Credits"))
-        XCTAssertNotNil(snapshot.line(label: "Balance"))
-        XCTAssertNotNil(snapshot.line(label: "Today"))
-    }
-
-    func testRefreshSurvivesKeyEndpointFailure() async {
-        let provider = OpenRouterProvider(
-            authStore: makeAuthStore(key: "sk-or-test"),
-            usageClient: OpenRouterUsageClient(http: RoutingHTTPClient { request in
-                if request.url.absoluteString == OpenRouterUsageClient.creditsURL {
-                    return jsonResponse(["data": ["total_credits": 100, "total_usage": 40]])
+            },
+            { request in
+                switch request.url.path() {
+                case "/api/v1/keys": OpenRouterFixtures.response(200, OpenRouterFixtures.keysPage(1, daily: 0, weekly: 0, monthly: 0))
+                case "/api/v1/activity": OpenRouterFixtures.response(200, #"{"data":[]}"#)
+                default: OpenRouterFixtures.managementAccount(request)
                 }
-                throw OpenRouterUsageError.connectionFailed
-            })
-        )
+            }
+        ]
+        for handler in handlers {
+            let (runtime, _) = try runtime(handler)
+            let store = WidgetDataStore.forTesting([runtime], defaults: isolatedDefaults(), now: { Self.now })
 
-        let snapshot = await provider.refresh()
+            _ = await store.refresh(providerID: runtime.provider.id, force: true)
 
-        XCTAssertFalse(snapshot.lines.contains { $0.isError })
-        XCTAssertNotNil(snapshot.line(label: "Balance"))
+            for key in ["today", "yesterday", "week", "month", "prior30"] {
+                let descriptor = try XCTUnwrap(runtime.widgetDescriptors.first { $0.key == key })
+                XCTAssertEqual(store.data(for: descriptor).dashboardRow(now: Self.now).mark, .value("$0"), key)
+                XCTAssertTrue(try XCTUnwrap(store.usageBreakdown(for: descriptor), key).isEmpty, key)
+            }
+        }
     }
 
-    func testRefreshShowsKeyDataWhenCreditsForbidden() async {
-        // If `/credits` is gated (403) but `/key` succeeds, still show the spend rows rather than erroring.
-        let provider = OpenRouterProvider(
-            authStore: makeAuthStore(key: "sk-or-test"),
-            usageClient: OpenRouterUsageClient(http: RoutingHTTPClient { request in
-                if request.url.absoluteString == OpenRouterUsageClient.creditsURL {
-                    return HTTPResponse(statusCode: 403, headers: [:], body: Data("{}".utf8))
-                }
-                return jsonResponse(["data": ["is_free_tier": false, "usage_daily": 0.5, "usage_weekly": 2]])
-            })
-        )
+    /// The build before rows went dollars-only saved BYOK beside them. This build never shows that snapshot,
+    /// even on a launch within the refresh interval, and reads OpenRouter instead.
+    func testASnapshotAnEarlierBuildSavedWithBYOKIsNotShown() async throws {
+        let (runtime, _) = try runtime(OpenRouterFixtures.managementAccount)
+        let defaults = isolatedDefaults()
+        let saved = ["Today", "This Week", "This Month"].map { label in
+            MetricLine.values(label: label, values: [MetricValue(number: 0, kind: .dollars), MetricValue(number: 0, kind: .dollars, label: "BYOK")])
+        }
+        ProviderSnapshotCache(userDefaults: defaults, storageKey: "openusage.providerSnapshots.v11")
+            .save([runtime.provider.id: ProviderSnapshot(provider: runtime.provider, plan: "Pay-as-you-go", lines: saved, refreshedAt: Self.now)])
+        let store = WidgetDataStore.forTesting([runtime], cache: ProviderSnapshotCache(userDefaults: defaults), defaults: defaults, now: { Self.now })
 
-        let snapshot = await provider.refresh()
+        let outcome = await store.refresh(providerID: runtime.provider.id)
 
-        XCTAssertNil(snapshot.errorCategory)
-        XCTAssertFalse(snapshot.lines.contains { $0.isError })
-        XCTAssertNotNil(snapshot.line(label: "Today"))
-        XCTAssertNil(snapshot.line(label: "Balance"))
+        XCTAssertEqual(outcome, .refreshed)
+        let today = try XCTUnwrap(runtime.widgetDescriptors.first { $0.key == "today" })
+        XCTAssertEqual(store.data(for: today).dashboardRow(now: Self.now).mark, .value("$26.50"))
     }
 
-    func testRefreshWithoutKeyReportsNotLoggedIn() async {
-        let provider = OpenRouterProvider(
-            authStore: OpenRouterAuthStore(files: FakeFiles(), environment: FakeEnvironment()),
-            usageClient: OpenRouterUsageClient(http: RoutingHTTPClient { _ in
-                XCTFail("should not hit the network without a key")
-                return jsonResponse([:])
-            })
-        )
+    func testAManagementKeyShowsTheAccountsSpendSummedOverEveryPageOfKeys() async throws {
+        let (runtime, http) = try runtime(OpenRouterFixtures.managementAccount)
 
-        let snapshot = await provider.refresh()
+        let snapshot = try await runtime.refresh().get()
 
-        XCTAssertEqual(snapshot.lines.first?.label, "Error")
-        XCTAssertEqual(snapshot.errorCategory, .notLoggedIn)
+        XCTAssertEqual(shownRows(snapshot, runtime), ["balance", "today", "yesterday", "week", "month", "prior30"])
+        XCTAssertEqual(dollars(snapshot, "Today"), 26.5)
+        XCTAssertEqual(dollars(snapshot, "This Week"), 54)
+        XCTAssertEqual(dollars(snapshot, "This Month"), 112)
+        XCTAssertEqual(dollars(snapshot, "Balance"), 77.75)
+        XCTAssertNil(snapshot.line(label: "Credits"))
+        XCTAssertEqual(snapshot.plan, "Pay-as-you-go")
+        XCTAssertEqual(http.requests.map { $0.url.path() }, ["/api/v1/key", "/api/v1/credits", "/api/v1/keys", "/api/v1/keys", "/api/v1/activity"])
+        for (request, offset) in zip(http.requests.dropFirst(2), ["0", "100"]) {
+            let query = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            XCTAssertEqual(Set(query), [
+                URLQueryItem(name: "include_disabled", value: "true"),
+                URLQueryItem(name: "include_expired", value: "true"),
+                URLQueryItem(name: "offset", value: offset)
+            ])
+        }
     }
 
-    func testRefreshOnAuthFailureReportsInvalidKey() async {
-        // Both endpoints reject the key — nothing usable comes back, so it's a hard auth failure.
-        let provider = OpenRouterProvider(
-            authStore: makeAuthStore(key: "sk-or-bad"),
-            usageClient: OpenRouterUsageClient(http: RoutingHTTPClient { _ in
-                HTTPResponse(statusCode: 401, headers: [:], body: Data("{}".utf8))
-            })
-        )
+    func testAWorkspaceScopedManagementKeyShowsItsWorkspacesSpendWithoutCredits() async throws {
+        let (runtime, http) = try runtime { request in
+            request.url.path() == "/api/v1/credits"
+                ? OpenRouterFixtures.response(403, OpenRouterFixtures.forbidden)
+                : OpenRouterFixtures.managementAccount(request)
+        }
 
-        let snapshot = await provider.refresh()
+        let snapshot = try await runtime.refresh().get()
 
-        XCTAssertEqual(snapshot.errorCategory, .authInvalid)
+        XCTAssertEqual(shownRows(snapshot, runtime), ["today", "yesterday", "week", "month", "prior30"])
+        XCTAssertEqual(dollars(snapshot, "Today"), 26.5)
+        XCTAssertEqual(dollars(snapshot, "This Week"), 54)
+        XCTAssertEqual(dollars(snapshot, "This Month"), 112)
+        XCTAssertEqual(http.requests.map { $0.url.path() }, ["/api/v1/key", "/api/v1/credits", "/api/v1/keys", "/api/v1/keys", "/api/v1/activity"])
     }
 
-    func testRefreshDoesNotReportInvalidKeyWhenOnlyCreditsForbidden() async {
-        // `/credits` 403 (gated for this key type) but `/key` 200 — the key is valid, just gated for
-        // credits. With no usable lines, the error must NOT be "invalid key" (it's not the key's fault).
-        let provider = OpenRouterProvider(
-            authStore: makeAuthStore(key: "sk-or-test"),
-            usageClient: OpenRouterUsageClient(http: RoutingHTTPClient { request in
-                if request.url.absoluteString == OpenRouterUsageClient.creditsURL {
-                    return HTTPResponse(statusCode: 403, headers: [:], body: Data("{}".utf8))
-                }
-                // `/key` returns 200 but with no usable fields → no metric lines.
-                return jsonResponse(["data": [:]])
-            })
-        )
+    func testAStandardKeyShowsItsOwnSpendAndLimitWithoutAskingForTheAccountsCredits() async throws {
+        let (runtime, http) = try runtime { request in
+            request.url.path() == "/api/v1/key"
+                ? OpenRouterFixtures.response(200, OpenRouterFixtures.standardKey)
+                : OpenRouterFixtures.response(403, OpenRouterFixtures.forbidden)
+        }
 
-        let snapshot = await provider.refresh()
+        let snapshot = try await runtime.refresh().get()
 
-        XCTAssertNotEqual(snapshot.errorCategory, .authInvalid)
+        XCTAssertEqual(shownRows(snapshot, runtime), ["today", "week", "month", "keyLimit", "budget", "freeRequests"])
+        XCTAssertEqual(snapshot.line(label: "Today"), .values(label: "Today", values: [MetricValue(number: 1.5, kind: .dollars)]))
+        XCTAssertEqual(snapshot.usageBreakdowns?["today"]?.figures, ["$1.50", "$17.38 BYOK"])
+        XCTAssertEqual(dollars(snapshot, "This Week"), 4)
+        XCTAssertEqual(dollars(snapshot, "This Month"), 12)
+        XCTAssertEqual(snapshot.line(label: "Key Limit"), .progress(
+            label: "Key Limit", used: 25.5, limit: 100, format: .dollars,
+            resetsAt: ISO8601DateFormatter().date(from: "2026-11-01T00:00:00Z"), periodDurationMs: 31 * MetricPeriod.dayMs
+        ))
+        XCTAssertEqual(snapshot.line(label: "Budget"), .progress(
+            label: "Budget", used: 32.5, limit: 50, format: .dollars,
+            resetsAt: ISO8601DateFormatter().date(from: "2026-11-02T00:00:00Z"), periodDurationMs: MetricPeriod.weekMs
+        ))
+        XCTAssertEqual(snapshot.line(label: "Free Requests"), .progress(
+            label: "Free Requests", used: 12, limit: 50, format: .count(suffix: "requests"),
+            resetsAt: ISO8601DateFormatter().date(from: "2026-10-30T00:00:00Z"), periodDurationMs: MetricPeriod.dayMs
+        ))
+        XCTAssertEqual(http.requests.map { $0.url.path() }, ["/api/v1/key"])
     }
 
-    func testProviderAPIKeyManagingDelegatesToAuthStore() throws {
-        let files = FakeFiles()
-        let provider = OpenRouterProvider(
-            authStore: OpenRouterAuthStore(files: files, environment: FakeEnvironment(["OPENROUTER_API_KEY": "sk-or-env"])),
-            usageClient: OpenRouterUsageClient(http: RoutingHTTPClient { _ in jsonResponse([:]) })
-        )
+    func testRestoredRowsKeepTheirOrder() {
+        let runtime = AccountProviderRuntime(account: Account(kind: .openrouter, label: "Work"), vault: InMemoryCredentialVault())
 
-        XCTAssertEqual(provider.apiKeyStatus, .fromEnvironment)
-        XCTAssertEqual(provider.currentAPIKey(), "sk-or-env")
-
-        try provider.saveAPIKey("sk-or-saved")
-        XCTAssertEqual(provider.apiKeyStatus, .overrideActive)
-        XCTAssertEqual(provider.currentAPIKey(), "sk-or-saved")
-
-        try provider.deleteAPIKey()
-        XCTAssertEqual(provider.apiKeyStatus, .fromEnvironment)
+        XCTAssertEqual(runtime.widgetDescriptors.map(\.title), [
+            "Balance", "Today", "Yesterday", "This Week", "This Month", "Prior 30 Days",
+            "Key Limit", "Budget", "Free Requests"
+        ])
     }
-
-    private func makeAuthStore(key: String) -> OpenRouterAuthStore {
-        OpenRouterAuthStore(files: FakeFiles(), environment: FakeEnvironment(["OPENROUTER_API_KEY": key]))
-    }
-}
-
-private func jsonResponse(_ object: [String: Any]) -> HTTPResponse {
-    let body = (try? JSONSerialization.data(withJSONObject: object)) ?? Data("{}".utf8)
-    return HTTPResponse(statusCode: 200, headers: [:], body: body)
 }

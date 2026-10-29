@@ -13,7 +13,7 @@ final class ZAIQuotaValidationMapperTests: XCTestCase {
 
         for body in malformedLimits {
             XCTAssertThrowsError(try ZAIUsageMapper.mapQuota(Data(body.utf8)), body) { error in
-                XCTAssertEqual(error as? ZAIUsageError, .invalidResponse, body)
+                XCTAssertEqual(error as? ProviderError, .invalidResponse, body)
             }
         }
     }
@@ -21,59 +21,41 @@ final class ZAIQuotaValidationMapperTests: XCTestCase {
     func testMalformedEnvelopeIsRejectedButExplicitEmptyLimitsRemainValid() throws {
         for body in ["not-json", #"{"data":[]}"#, #"{"data":{}}"#, #"{"data":{"limits":{}}}"#] {
             XCTAssertThrowsError(try ZAIUsageMapper.mapQuota(Data(body.utf8)), body) { error in
-                XCTAssertEqual(error as? ZAIUsageError, .invalidResponse, body)
+                XCTAssertEqual(error as? ProviderError, .invalidResponse, body)
             }
         }
 
         let lines = try ZAIUsageMapper.mapQuota(Data(#"{"data":{"limits":[]}}"#.utf8))
-        XCTAssertNotNil(lines.first { $0.label == "Status" })
+        XCTAssertTrue(lines.isEmpty)
     }
 
-    func testUnknownEntriesDoNotHideKnownMeters() throws {
-        let body = Data(
-            #"{"data":{"limits":[{"type":"FUTURE_LIMIT"},{"type":"TOKENS_LIMIT","unit":99,"number":1,"percentage":70},{"type":"TOKENS_LIMIT","unit":3,"number":5,"percentage":25}]}}"#.utf8
-        )
+    func testAKeyWithNoCodingPlanSaysSoAndAnyOtherFailedBodyStaysInvalid() {
+        let noPlan = Data(#"{"code":500,"msg":"当前用户不存在coding plan","success":false}"#.utf8)
+        XCTAssertThrowsError(try ZAIUsageMapper.mapQuota(noPlan)) { error in
+            XCTAssertEqual(error as? ProviderError, .unavailable("No active GLM Coding Plan. Subscribe at z.ai/subscribe to see usage."))
+        }
 
-        let lines = try ZAIUsageMapper.mapQuota(body)
+        let other = Data(#"{"code":500,"msg":"internal error","success":false}"#.utf8)
+        XCTAssertThrowsError(try ZAIUsageMapper.mapQuota(other)) { error in
+            XCTAssertEqual(error as? ProviderError, .invalidResponse)
+        }
+    }
+
+    func testAKeyZaiRefusesInsideAnOKResponseIsRejected() {
+        let refused = Data(#"{"code":401,"msg":"token expired or incorrect","success":false}"#.utf8)
+        XCTAssertThrowsError(try ZAIUsageMapper.mapQuota(refused)) { error in
+            XCTAssertEqual(error as? ProviderError, .signInExpired(.zai))
+        }
+    }
+
+    func testUnknownLimitsShowNothingAndDoNotHideKnownMeters() throws {
+        let unknown = #"{"type":"FUTURE_LIMIT"},{"type":"TOKENS_LIMIT","unit":99,"number":1,"percentage":70}"#
+        XCTAssertTrue(try ZAIUsageMapper.mapQuota(Data(#"{"data":{"limits":[\#(unknown)]}}"#.utf8)).isEmpty)
+
+        let known = #"{"type":"TOKENS_LIMIT","unit":3,"number":5,"percentage":25}"#
+        let lines = try ZAIUsageMapper.mapQuota(Data(#"{"data":{"limits":[\#(unknown),\#(known)]}}"#.utf8))
 
         XCTAssertNotNil(lines.first { $0.label == "Session" })
         XCTAssertNil(lines.first { $0.label == "Weekly" })
-    }
-
-    func testOnlyUnknownLimitsRemainForwardCompatibleNoData() throws {
-        let body = Data(
-            #"{"data":{"limits":[{"type":"FUTURE_LIMIT"},{"type":"TOKENS_LIMIT","unit":99,"number":1,"percentage":70}]}}"#.utf8
-        )
-
-        let lines = try ZAIUsageMapper.mapQuota(body)
-
-        XCTAssertNotNil(lines.first { $0.label == "Status" })
-    }
-}
-
-@MainActor
-final class ZAIQuotaValidationProviderTests: XCTestCase {
-    func testMissingUsageReportsInvalidResponseInsteadOfZeroMeter() async {
-        let provider = ZAIProvider(
-            authStore: ZAIAuthStore(
-                files: FakeFiles(),
-                environment: FakeEnvironment(["ZAI_API_KEY": "zai-test"])
-            ),
-            usageClient: ZAIUsageClient(http: RoutingHTTPClient { request in
-                if request.url == ZAIUsageClient.quotaURL {
-                    return HTTPResponse(
-                        statusCode: 200,
-                        headers: [:],
-                        body: Data(#"{"data":{"limits":[{"type":"TOKENS_LIMIT","unit":3,"number":5}]}}"#.utf8)
-                    )
-                }
-                return HTTPResponse(statusCode: 200, headers: [:], body: Data(#"{"data":[]}"#.utf8))
-            })
-        )
-
-        let snapshot = await provider.refresh()
-
-        XCTAssertEqual(snapshot.errorCategory, .decoding)
-        XCTAssertNil(snapshot.line(label: "Session"))
     }
 }

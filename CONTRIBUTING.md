@@ -43,20 +43,12 @@ By submitting a pull request, you agree that your contribution is licensed under
 3. Fork the repo
 4. Create a branch (`feat/my-change`, `fix/some-bug`, etc.)
 5. Make only the approved change
-6. Run `swift build` and `swift test` to verify nothing is broken
+6. Run `swift build` and `script/test_quiet.sh` to verify nothing is broken
 7. Open a PR against `main` and link your assigned, approved issue with `Fixes #<issue>`
 
 ### Add a provider
 
-Each provider is a small Swift module under `Sources/OpenUsage/Providers/<Name>/` that conforms to `ProviderRuntime`: an auth store reads credentials already on the user's machine, a usage client calls the provider's API, and a mapper normalizes the response into metric lines. See [docs/adding-a-provider.md](docs/adding-a-provider.md) for the full walkthrough (and [docs/architecture.md](docs/architecture.md) for how the pieces fit together).
-
-1. Open or comment on an issue and wait for a maintainer to approve it (`approved` label) and assign it to you — include why the provider fits and how its usage data is accessible
-2. Create `Sources/OpenUsage/Providers/<Name>/` and implement `ProviderRuntime`
-3. Register the provider in `AppContainer`
-4. Add focused tests under `Tests/OpenUsageTests/`
-5. Add a provider page in `docs/providers/` (metrics, credential sources, endpoints, troubleshooting)
-6. Test it locally with `./script/build_and_run.sh`
-7. Open a PR with screenshots showing it working
+Get the provider issue approved and assigned to you, then follow [docs/adding-a-provider.md](docs/adding-a-provider.md).
 
 You can also [open an issue](https://github.com/robinebers/openusage/issues/new?template=new_provider.yml) to request a provider without building it yourself.
 
@@ -91,11 +83,7 @@ Don't open a PR for a feature without an approved issue assigned to you first. [
 
 ## Code Standards
 
-- Swift 6 with strict concurrency, built with SwiftPM (no Xcode project)
-- Follow existing patterns in the codebase — [AGENTS.md](AGENTS.md) is the engineering contract
-- User-visible behavior changes must update the matching `docs/` page(s) in the same PR
-- UI copy is plain language and sentence case
-- No new dependencies without justification
+[AGENTS.md](AGENTS.md) is the engineering contract.
 
 ## Maintainers
 

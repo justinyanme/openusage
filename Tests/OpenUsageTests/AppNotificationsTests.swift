@@ -1,39 +1,31 @@
-import XCTest
 import UserNotifications
+import XCTest
 @testable import OpenUsage
 
 /// `AppNotifications` wraps `UNUserNotificationCenter`, which can't be instantiated or subclassed in a
 /// unit test. The behavior we can pin without a live center is the test short-circuit: under XCTest,
-/// `post` / `registerAsDelegate` must never touch the center (no prompt, no scheduled notification), so
-/// the injected center provider is never invoked. The end-to-end "one post per fired milestone" check
-/// lives in `WidgetDataStoreNotificationTests`, which injects a recording sink into the store.
+/// `post` never delivers (no prompt, no scheduled notification). The end-to-end "one post per fired
+/// milestone" check lives in `WidgetDataStoreNotificationTests`, which injects a recording sink into the
+/// store.
 @MainActor
 final class AppNotificationsTests: XCTestCase {
-    func testIsRunningUnderTestsIsTrueInTheHarness() {
-        XCTAssertTrue(AppNotifications.isRunningUnderTests)
-    }
-
-    func testShowHandlerIsInvokedByShow() {
-        var opened = false
-        MenuBarPopover.showHandler = { opened = true }
-        defer { MenuBarPopover.showHandler = nil }
-        MenuBarPopover.show()
-        XCTAssertTrue(opened)
-    }
-
-    func testPostIsANoOpUnderTestsAndNeverTouchesTheCenter() async {
-        let probe = CenterProbe()
-        let notifications = AppNotifications(centerProvider: {
-            probe.touched = true
-            return UNUserNotificationCenter.current()
+    func testPostSkipsAuthorizationAndDeliveryUnderTests() async {
+        let notifications = AppNotifications(authorizationStatus: {
+            XCTFail("Posting under XCTest must skip the system permission check")
+            return .denied
         })
-        _ = await notifications.post(idPrefix: "claude.session.healthyToClose", title: "Cutting It Close", subtitle: "Claude Session", body: "x")
-        notifications.registerAsDelegate()
-        XCTAssertFalse(probe.touched, "Under tests, no notification path should reach the center provider")
+        let delivered = await notifications.post(idPrefix: "claude.session.healthyToClose", title: "Cutting It Close", subtitle: "Claude Session", body: "x")
+        XCTAssertFalse(delivered)
     }
 
-    /// A tiny reference box so the `@Sendable` provider closure can record whether it ran.
-    private final class CenterProbe: @unchecked Sendable {
-        var touched = false
+    func testAPermissionRevokedAfterAGrantReadsAsDenied() async {
+        var status = UNAuthorizationStatus.authorized
+        let notifications = AppNotifications(authorizationStatus: { status })
+        let granted = await notifications.requestAuthorization()
+        XCTAssertTrue(granted)
+
+        status = .denied
+        let afterRevoke = await notifications.requestAuthorization()
+        XCTAssertFalse(afterRevoke, "a permission revoked in System Settings still reads as granted")
     }
 }

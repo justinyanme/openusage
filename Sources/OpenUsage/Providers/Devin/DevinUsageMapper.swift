@@ -1,124 +1,46 @@
 import Foundation
 
-struct DevinMappedUsage: Equatable, Sendable {
-    var plan: String?
-    var lines: [MetricLine]
-}
-
 enum DevinUsageMapper {
-    static let dayPeriodMs = MetricPeriod.dayMs
-    static let weekPeriodMs = MetricPeriod.weekMs
-
-    static func mapUserStatusResponse(_ response: HTTPResponse) throws -> DevinMappedUsage {
-        guard let body = ProviderParse.jsonObject(response.body),
-              let userStatus = body["userStatus"] as? [String: Any]
-        else {
-            throw DevinUsageError.invalidResponse
+    static func map(_ body: Data) throws -> ProviderUsage {
+        guard let userStatus = ProviderParse.jsonObject(body)?["userStatus"] as? [String: Any] else {
+            throw ProviderError.invalidResponse
         }
-        return try mapUserStatus(userStatus)
-    }
-
-    static func mapUserStatus(_ userStatus: [String: Any]) throws -> DevinMappedUsage {
         let planStatus = userStatus["planStatus"] as? [String: Any] ?? [:]
         let planInfo = planStatus["planInfo"] as? [String: Any] ?? [:]
-        let plan = readTrimmedString(planInfo["planName"]) ?? "Unknown"
-        let hideDailyQuota = ProviderParse.bool(planInfo["hideDailyQuota"]) == true
-
-        let dailyRemaining = ProviderParse.number(planStatus["dailyQuotaRemainingPercent"])
-        let weeklyRemaining = ProviderParse.number(planStatus["weeklyQuotaRemainingPercent"])
-        // A present-but-unparsable percentage is schema drift, not an omitted zero: fail loudly
-        // instead of letting the exhausted-quota fallback below turn it into a credible 100% used.
-        if planStatus["weeklyQuotaRemainingPercent"] != nil, weeklyRemaining == nil {
-            throw DevinUsageError.invalidResponse
-        }
-        let dailyReset = hideDailyQuota ? nil : unixSecondsToDate(planStatus["dailyQuotaResetAtUnix"])
-        let weeklyReset = unixSecondsToDate(planStatus["weeklyQuotaResetAtUnix"])
-        let extraUsageBalance = dollarsFromMicros(planStatus["overageBalanceMicros"])
+        let daily = try quota(planStatus, remaining: "dailyQuotaRemainingPercent", reset: "dailyQuotaResetAtUnix")
+        let weekly = try quota(planStatus, remaining: "weeklyQuotaRemainingPercent", reset: "weeklyQuotaResetAtUnix")
 
         var lines: [MetricLine] = []
-        if !hideDailyQuota,
-           let dailyRemaining {
-            lines.append(quotaLine(
-                label: "Daily quota",
-                remaining: dailyRemaining,
-                resetsAt: dailyReset,
-                periodDurationMs: dayPeriodMs
-            ))
+        if ProviderParse.bool(planInfo["hideDailyQuota"]) == true {
+            // A plan that hides its daily quota still meters it. With no weekly window, the Weekly row
+            // carries it.
+            if let shown = weekly ?? daily.map({ (remaining: $0.remaining, resetsAt: nil) }) {
+                lines.append(quotaLine("Weekly quota", shown, periodMs: MetricPeriod.weekMs))
+            }
+        } else {
+            if let daily { lines.append(quotaLine("Daily quota", daily, periodMs: MetricPeriod.dayMs)) }
+            if let weekly { lines.append(quotaLine("Weekly quota", weekly, periodMs: MetricPeriod.weekMs)) }
         }
-
-        // Proto3 JSON omits zero values. A weekly reset identifies an existing weekly window.
-        if let weeklyRemaining = weeklyRemaining ?? (weeklyReset != nil ? 0 : nil) {
-            lines.append(quotaLine(
-                label: "Weekly quota",
-                remaining: weeklyRemaining,
-                resetsAt: weeklyReset,
-                periodDurationMs: weekPeriodMs
-            ))
-        } else if hideDailyQuota,
-                  let dailyRemaining {
-            // No weekly percentage or reset in the response: surface the hidden daily quota so
-            // the tile stays meaningful. Still flipped from remaining→used, just like every quota row.
-            lines.append(quotaLine(
-                label: "Weekly quota",
-                remaining: dailyRemaining,
-                resetsAt: weeklyReset,
-                periodDurationMs: weekPeriodMs
-            ))
+        if let micros = ProviderParse.number(planStatus["overageBalanceMicros"]) {
+            lines.append(.values(label: "Extra usage balance", values: [MetricValue(number: max(0, micros) / 1_000_000, kind: .dollars)]))
         }
-
-        if let extraUsageBalance {
-            // Carried raw (not a baked currency string) so it formats through `MetricFormatter` and picks
-            // up the same compact "$1.2K left" shorthand as the spend tiles.
-            lines.append(.values(label: "Extra usage balance", values: [MetricValue(number: extraUsageBalance, kind: .dollars)]))
-        }
-
         guard !lines.isEmpty else {
-            throw DevinUsageError.quotaUnavailable
+            throw ProviderError.unavailable("Devin reports no quota for this account.")
         }
-
-        return DevinMappedUsage(plan: plan, lines: lines)
+        let plan = (planInfo["planName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        return ProviderUsage(plan: plan, lines: lines)
     }
 
-    /// Devin reports quota as percent *remaining*; the tile shows percent *used*, so every quota row
-    /// flips `100 - remaining` (clamped) — including the weekly-from-daily fallback above.
-    private static func quotaLine(label: String, remaining: Double, resetsAt: Date?, periodDurationMs: Int) -> MetricLine {
-        .progress(
-            label: label,
-            used: ProviderParse.clampPercent(100 - remaining),
-            limit: 100,
-            format: .percent,
-            resetsAt: resetsAt,
-            periodDurationMs: periodDurationMs
-        )
+    /// Devin reports the share of a quota left. Proto3 JSON omits a zero, so a window with a reset and
+    /// no share has none left. A share present but unreadable is a changed schema, not an empty quota.
+    private static func quota(_ planStatus: [String: Any], remaining key: String, reset resetKey: String) throws -> (remaining: Double, resetsAt: Date?)? {
+        let resetsAt = ProviderParse.number(planStatus[resetKey]).map { Date(timeIntervalSince1970: $0) }
+        guard let value = planStatus[key] else { return resetsAt.map { (0, $0) } }
+        guard let remaining = ProviderParse.number(value) else { throw ProviderError.invalidResponse }
+        return (remaining, resetsAt)
     }
 
-    private static func unixSecondsToDate(_ value: Any?) -> Date? {
-        guard let seconds = ProviderParse.number(value) else { return nil }
-        return Date(timeIntervalSince1970: seconds)
-    }
-
-    /// An overage balance in dollars; `nil` only when the field is missing or non-numeric (truly no
-    /// data). A present balance of zero stays a real, measured zero (renders "$0.00") — not "No data".
-    private static func dollarsFromMicros(_ value: Any?) -> Double? {
-        guard let micros = ProviderParse.number(value) else { return nil }
-        return max(0, micros) / 1_000_000
-    }
-
-    private static func readTrimmedString(_ value: Any?) -> String? {
-        guard let string = value as? String else { return nil }
-        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-}
-
-enum DevinUsageError: Error, LocalizedError, Equatable {
-    case invalidResponse
-    case quotaUnavailable
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidResponse, .quotaUnavailable:
-            return "Devin quota data unavailable. Try again later."
-        }
+    private static func quotaLine(_ label: String, _ quota: (remaining: Double, resetsAt: Date?), periodMs: Int) -> MetricLine {
+        .percent(label, ProviderParse.clampPercent(100 - quota.remaining), resetsAt: quota.resetsAt, periodMs: periodMs)
     }
 }

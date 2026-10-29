@@ -3,54 +3,55 @@ import Foundation
 struct OpenRouterUsageClient: Sendable {
     static let creditsURL = "https://openrouter.ai/api/v1/credits"
     static let keyURL = "https://openrouter.ai/api/v1/key"
+    static let keysURL = "https://openrouter.ai/api/v1/keys"
+    static let activityURL = "https://openrouter.ai/api/v1/activity"
+    static let keysPageSize = 100
+    /// Bounds the page loop should OpenRouter ever ignore `offset`.
+    static let maxKeysPages = 50
 
     var http: any HTTPClient
 
-    init(http: any HTTPClient = URLSessionHTTPClient()) {
-        self.http = http
+    func key(apiKey: String, now: Date) async throws -> OpenRouterKey {
+        try OpenRouterUsageMapper.key(try await get(Self.keyURL, apiKey: apiKey), now: now)
     }
 
-    /// Account-wide credit balance and lifetime spend. Fetched independently from key metadata because
-    /// OpenRouter can gate either endpoint for a particular key type.
-    func fetchCredits(apiKey: String) async throws -> HTTPResponse {
-        try await get(Self.creditsURL, apiKey: apiKey)
+    /// Empty for a Management key scoped to one workspace: OpenRouter bills credits per account and
+    /// refuses such a key the account's credits with a 403.
+    func creditsLines(apiKey: String) async throws -> [MetricLine] {
+        let response = try await send(Self.creditsURL, apiKey: apiKey)
+        if response.statusCode == 403 { return [] }
+        try ProviderError.requireSuccess(response, kind: .openrouter)
+        return try OpenRouterUsageMapper.creditsLines(response.body)
     }
 
-    /// Best-effort key metadata: tier, optional per-key spend cap, and daily/weekly/monthly spend.
-    func fetchKey(apiKey: String) async throws -> HTTPResponse {
-        try await get(Self.keyURL, apiKey: apiKey)
+    /// Disabled and expired keys count too: what they spent before they stopped is still this period's spend.
+    func listedKeysSpend(apiKey: String) async throws -> [UsageWindow: UsageTotals] {
+        var total: [UsageWindow: UsageTotals] = [:]
+        for page in 0..<Self.maxKeysPages {
+            let url = "\(Self.keysURL)?include_disabled=true&include_expired=true&offset=\(page * Self.keysPageSize)"
+            let keys = try OpenRouterUsageMapper.keysPage(try await get(url, apiKey: apiKey))
+            total = keys.reduce(total) { $0.merging($1) { $0.adding($1) } }
+            if keys.count < Self.keysPageSize { return total }
+        }
+        throw ProviderError.invalidResponse
     }
 
-    private func get(_ urlString: String, apiKey: String) async throws -> HTTPResponse {
+    /// One UTC day when `date` is set, else the last 30 finished UTC days.
+    func activity(apiKey: String, date: Date?) async throws -> HTTPResponse {
+        let day = date.map { "?date=\($0.formatted(.iso8601.year().month().day()))" } ?? ""
+        return try await send(Self.activityURL + day, apiKey: apiKey)
+    }
+
+    private func get(_ urlString: String, apiKey: String) async throws -> Data {
+        let response = try await send(urlString, apiKey: apiKey)
+        try ProviderError.requireSuccess(response, kind: .openrouter)
+        return response.body
+    }
+
+    private func send(_ urlString: String, apiKey: String) async throws -> HTTPResponse {
         guard let url = URL(string: urlString) else {
-            throw OpenRouterUsageError.invalidResponse
+            throw ProviderError.invalidResponse
         }
-
-        return try await http.send(HTTPRequest(
-            method: "GET",
-            url: url,
-            headers: [
-                "Authorization": "Bearer \(apiKey)",
-                "Accept": "application/json"
-            ],
-            timeout: 15
-        ))
-    }
-}
-
-enum OpenRouterUsageError: Error, LocalizedError, Equatable {
-    case connectionFailed
-    case invalidResponse
-    case requestFailed(Int)
-
-    var errorDescription: String? {
-        switch self {
-        case .connectionFailed:
-            return "Couldn't reach OpenRouter. Check your connection."
-        case .invalidResponse:
-            return "OpenRouter usage data unavailable. Try again later."
-        case .requestFailed(let status):
-            return "OpenRouter request failed (HTTP \(status))."
-        }
+        return try await LoginHTTP.get(url, bearerToken: apiKey, using: http, headers: ["Accept": "application/json"])
     }
 }

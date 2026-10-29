@@ -21,16 +21,7 @@ final class PanelGeometryTests: XCTestCase {
         XCTAssertEqual(left.y, 846)
     }
 
-    func testMaximumHeightUsesAvailableRoomAndDisplayCap() {
-        let visible = NSRect(x: 0, y: 0, width: 1200, height: 1000)
-
-        XCTAssertEqual(
-            PanelGeometry.maximumHeight(topLeft: NSPoint(x: 100, y: 900), visibleFrame: visible),
-            850
-        )
-    }
-
-    func testShortDisplayMayShrinkBelowNormalMinimum() {
+    func testShortDisplayCapsTheHeightToTheRoomBelowTheAnchor() {
         let visible = NSRect(x: 0, y: 0, width: 500, height: 200)
         let maximum = PanelGeometry.maximumHeight(
             topLeft: NSPoint(x: 100, y: 190),
@@ -38,28 +29,9 @@ final class PanelGeometryTests: XCTestCase {
         )
 
         XCTAssertEqual(maximum, 170)
-        XCTAssertEqual(PanelGeometry.clampedHeight(600, maximum: maximum), 170)
-    }
-
-    func testHeightClampsToNormalMinimumAndDisplayMaximum() {
-        XCTAssertEqual(PanelGeometry.clampedHeight(50, maximum: 700), 200)
-        XCTAssertEqual(PanelGeometry.clampedHeight(900, maximum: 700), 700)
-        XCTAssertEqual(PanelGeometry.clampedHeight(520, maximum: 700), 520)
-    }
-
-    func testChangingHeightKeepsTopEdgeFixed() {
-        let topLeft = NSPoint(x: 120, y: 800)
-        let short = PanelGeometry.frame(topLeft: topLeft, width: 320, height: 300)
-        let tall = PanelGeometry.frame(topLeft: topLeft, width: 320, height: 650)
-
-        XCTAssertEqual(short.maxY, topLeft.y)
-        XCTAssertEqual(tall.maxY, topLeft.y)
-        XCTAssertEqual(short.minX, tall.minX)
-        XCTAssertEqual(short.width, tall.width)
     }
 
     func testFractionalAnchorAndHeightsKeepTopEdgeOnOneWholePoint() {
-        // A status item on a half point puts the anchor at x.5; the morph passes fractional heights.
         let topLeft = NSPoint(x: 995, y: 949.5)
 
         let frames = (0...1610).map { step in
@@ -68,5 +40,11 @@ final class PanelGeometryTests: XCTestCase {
 
         XCTAssertEqual(Set(frames.map(\.maxY)), [949])
         XCTAssertTrue(frames.allSatisfy { $0.minY == $0.minY.rounded() && $0.height == $0.height.rounded() })
+    }
+
+    func testAttachedSheetRaisesThePanelUntilItEnds() {
+        XCTAssertEqual(PanelGeometry.height(content: 250, attachedSheet: nil), 250)
+        XCTAssertEqual(PanelGeometry.height(content: 250, attachedSheet: 394), 394 + PanelGeometry.sheetMargin)
+        XCTAssertEqual(PanelGeometry.height(content: 600, attachedSheet: 394), 600)
     }
 }

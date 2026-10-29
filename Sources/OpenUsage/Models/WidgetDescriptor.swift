@@ -1,27 +1,36 @@
 import Foundation
 
-/// A provider metric's identity and presentation template. Live provider lines supply the values;
-/// `sample` carries stable display metadata such as title, icon, kind, and descriptor opt-ins.
 struct WidgetDescriptor: Identifiable, Hashable {
-    let id: String                 // "claude.session"
+    let id: String
     let providerID: String
+    let providerKind: ProviderKind
+    let key: String
     let metricLabel: String
     let sample: WidgetData
-    /// Whether this widget can be pinned to the menu-bar strip. False for tiles the tray can't render as
-    /// a value — the Usage Trend chart — so the pin affordance never offers a pin that would read "0".
-    var pinnable: Bool = true
-    /// True only for the `SpendTileMapper`-backed spend-history tiles (see `WidgetDescriptor.spendTiles`).
-    /// The Total Spend card keys on this to decide which providers feed the ring — a title match would
-    /// wrongly rope in look-alike rows like OpenRouter's API-spend "Today".
-    var isSpendTile: Bool = false
-    /// Stable scalar resources exported by `/v1/limits`. Empty for UI-only/history widgets.
     var limitResources: [LimitResourceDescriptor] = []
-    /// Explicit aggregation semantics for this provider's normalized daily history. Exactly one
-    /// descriptor carries it for every provider that exposes the shared spend tiles.
-    var historyResource: UsageHistoryDescriptor? = nil
+    var historyRow: HistoryRow?
+    /// What the row reads when the provider reports nothing for it; nil hides the row instead.
+    var unreportedValues: [MetricValue]?
 
-    /// The metric's single display name.
+    init(provider: Provider, key: String, metricLabel: String, sample: WidgetData) {
+        id = "\(provider.id).\(key)"
+        providerID = provider.id
+        providerKind = provider.kind
+        self.key = key
+        self.metricLabel = metricLabel
+        self.sample = sample
+    }
+
+    var kindScopedKey: String { "\(providerKind.rawValue).\(key)" }
+
     var title: String { sample.title }
+
+    /// What's left of an open balance: money or credits the user holds, with no limit to measure it
+    /// against. Limit Resets export as a balance too, but having none is not having run out of anything.
+    func balance(in data: WidgetData) -> MetricValue? {
+        guard !sample.showsResetExpiries, data.hasData, data.limit == nil else { return nil }
+        return limitResources.first { $0.kind == .balance }?.value(in: data.values)
+    }
 
     static func == (lhs: WidgetDescriptor, rhs: WidgetDescriptor) -> Bool { lhs.id == rhs.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }

@@ -4,7 +4,7 @@ import Foundation
 import os
 
 /// Answers "is anything watching the screen right now?" — the live signal behind the menu bar's
-/// Hide From Screen Share setting (`MenuBarPrivacyStore`).
+/// Privacy Mode setting (`HideFromScreenShareSetting`).
 ///
 /// The window server tracks every attached capture stream — Zoom/Meet/Teams screen shares, QuickTime
 /// and `screencapture` recordings, OBS, macOS Screen Sharing — but macOS gives AppKit apps no public
@@ -28,7 +28,7 @@ enum ScreenCaptureProbe {
 
     /// Window-server notification ids for a screen watcher attaching/detaching — the pair the system's
     /// own capture indicator rides. Private but long-stable; they only make detection *faster*, never
-    /// correct (the store's poll is the guarantee), so a silent change can't break the feature.
+    /// correct (the setting's poll is the guarantee), so a silent change can't break the feature.
     private static let watcherAttachedEvent: UInt32 = 1502
     private static let watcherDetachedEvent: UInt32 = 1503
 
@@ -64,10 +64,10 @@ enum ScreenCaptureProbe {
         didInstall = true
 
         if isWatcherPresent == nil {
-            AppLog.error(.menubar, "SLSIsScreenWatcherPresent unavailable; screen-share detection is limited to remote sessions")
+            AppLog.error(.statusItem, "SLSIsScreenWatcherPresent unavailable; screen-share detection is limited to remote sessions")
         }
         guard let registerNotifyProc else {
-            AppLog.warn(.menubar, "SLSRegisterNotifyProc unavailable; screen-share detection relies on polling")
+            AppLog.warn(.statusItem, "SLSRegisterNotifyProc unavailable; screen-share detection relies on polling")
             return
         }
         // A C-convention callback can't capture context; it reaches the handler through the static box.
@@ -76,7 +76,7 @@ enum ScreenCaptureProbe {
         }
         let attached = registerNotifyProc(callback, watcherAttachedEvent, nil)
         let detached = registerNotifyProc(callback, watcherDetachedEvent, nil)
-        AppLog.info(.menubar, "Screen-watcher notifications registered (attach: \(attached), detach: \(detached))")
+        AppLog.info(.statusItem, "Screen-watcher notifications registered (attach: \(attached), detach: \(detached))")
     }
 
     /// The public fallback: `CGSessionCopyCurrentDictionary` reports macOS Screen Sharing / remote

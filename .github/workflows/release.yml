@@ -56,6 +56,15 @@ jobs:
             echo "prerelease=$PRERELEASE"
           } >> "$GITHUB_OUTPUT"
 
+      # Runs before the build so a release without CHANGELOG.md notes stops before anything is published.
+      - name: Extract release notes
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -o pipefail
+          mkdir -p feed
+          git show "$GITHUB_WORKFLOW_SHA:script/release_notes.sh" | bash -s -- "v$VERSION" "feed/OpenUsage-$VERSION.md"
+
       # Imports the Developer ID cert into a temporary keychain and adds it to the search list (cleaned up
       # automatically in a post step). Replaces a hand-rolled `security create-keychain`/`import` block.
       - name: Import Developer ID certificate
@@ -78,13 +87,6 @@ jobs:
         run: |
           printf '%s' "$SPARKLE_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle_ed_private_key"
           echo "SPARKLE_PRIVATE_KEY_FILE=$RUNNER_TEMP/sparkle_ed_private_key" >> "$GITHUB_ENV"
-
-      - name: Write iCloud provisioning profile
-        env:
-          ICLOUD_PROFILE_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_ICLOUD_PROFILE }}
-        run: |
-          printf '%s' "$ICLOUD_PROFILE_BASE64" | base64 --decode > "$RUNNER_TEMP/openusage-icloud.provisionprofile"
-          echo "ICLOUD_PROVISIONING_PROFILE=$RUNNER_TEMP/openusage-icloud.provisionprofile" >> "$GITHUB_ENV"
 
       - name: Carry forward the existing appcast
         run: |
@@ -123,7 +125,7 @@ jobs:
         run: ./script/release.sh
 
       # Upload the dSYM produced by release.sh so PostHog can symbolicate crash reports (the in-app
-      # crash autocapture is anonymous and honors the Share-Anonymous-Usage opt-out; see docs/privacy.md).
+      # crash autocapture is anonymous and always on; no opt-out covers it; see docs/privacy.md).
       # posthog-cli is a CI-only build tool (npm), never shipped in the app bundle. Skips with a loud
       # warning when POSTHOG_CLI_API_KEY is unset (e.g. forks), so a missing key never blocks a release;
       # when the key IS set, an upload failure fails the step so we never silently ship unsymbolicated.
@@ -195,6 +197,7 @@ jobs:
             --ed-key-file - \
             --download-url-prefix "$DOWNLOAD_PREFIX" \
             --maximum-versions 0 \
+            --embed-release-notes \
             "${channel_arg[@]}" \
             feed
 
@@ -204,6 +207,9 @@ jobs:
           after=$(grep -c "<item>" feed/appcast.xml || true)
           grep -Eq "$DMG\"[^>]*sparkle:edSignature" feed/appcast.xml \
             || { echo "New item for $DMG is missing or unsigned (SUPublicEDKey/private-key mismatch?)." >&2; exit 1; }
+          xmllint --xpath "string(//item[enclosure[contains(@url, '/$DMG')]]/description)" feed/appcast.xml \
+            | grep '[^[:space:]]' >/dev/null \
+            || { echo "New item for $DMG has no release notes in <description>." >&2; exit 1; }
           [ "$after" -ge "$before" ] || { echo "Appcast item count dropped ($before -> $after) — aborting." >&2; exit 1; }
           echo "Appcast OK: $before -> $after items."
 
@@ -218,6 +224,6 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_branch: gh-pages
           publish_dir: ./public
-          # gh-pages also hosts pricing_supplement.json (see pricing-supplement.yml). Without
-          # keep_files, publishing the appcast would delete it from the branch.
+          # gh-pages still hosts pricing_supplement.json, which installed 0.7.x apps fetch daily.
+          # Without keep_files, publishing the appcast would delete it from the branch.
           keep_files: true

@@ -1,24 +1,38 @@
 import Foundation
 import Network
 
-/// Optional proxy routing for provider HTTP requests — the same contract as the original app
-/// (docs/proxy.md): `~/.openusage/config.json` containing
-/// `{"proxy": {"enabled": true, "url": "socks5://127.0.0.1:10808"}}`.
-///
-/// Loaded once at startup; restart the app after editing the file. Missing, disabled, invalid, or
-/// unreadable config leaves proxying off. Credentials may be embedded in the URL
-/// (`http://user:pass@host:port`). Loopback hosts always bypass the proxy.
 struct ProxyConfig: Equatable, Sendable {
-    enum Scheme: String, Equatable, Sendable {
+    enum Scheme: String, Sendable {
         case socks5
         case http
         case https
 
         var defaultPort: UInt16 {
             switch self {
-            case .socks5: return 1080
-            case .http: return 80
-            case .https: return 443
+            case .socks5: 1080
+            case .http: 80
+            case .https: 443
+            }
+        }
+    }
+
+    struct Credential: Equatable, Sendable {
+        var username: String
+        var password: String
+    }
+
+    /// Error text never quotes the URL, not even its scheme. A password can sit anywhere in it, and
+    /// `user:pass@host` without a scheme parses its user name as the scheme.
+    enum ParseError: LocalizedError, Equatable {
+        case invalidJSON
+        case invalidURL
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidJSON:
+                #"~/.openusage/config.json is not valid JSON in the form {"proxy": {"enabled": true, "url": "socks5://host:port"}}"#
+            case .invalidURL:
+                "proxy.url in ~/.openusage/config.json must be socks5://, http://, or https://, then a host and an optional port"
             }
         }
     }
@@ -26,59 +40,56 @@ struct ProxyConfig: Equatable, Sendable {
     var scheme: Scheme
     var host: String
     var port: UInt16
-    var username: String?
-    var password: String?
+    var credential: Credential?
 
-    static let configPath = "~/.openusage/config.json"
-
-    /// The app-wide proxy, read from disk exactly once (first use).
-    static let current: ProxyConfig? = load(
-        text: try? String(
-            contentsOfFile: NSString(string: configPath).expandingTildeInPath,
-            encoding: .utf8
-        )
-    )
-
-    /// Parses config-file text. `nil` unless `proxy.enabled == true` with a valid socks5/http/https
-    /// URL — the silent-disable behavior the original documents.
-    static func load(text: String?) -> ProxyConfig? {
-        guard let text,
-              let data = text.data(using: .utf8),
-              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let proxy = root["proxy"] as? [String: Any],
-              proxy["enabled"] as? Bool == true,
-              let urlString = proxy["url"] as? String,
-              let url = URL(string: urlString),
-              let schemeRaw = url.scheme?.lowercased(),
-              let scheme = Scheme(rawValue: schemeRaw),
-              let host = url.host(), !host.isEmpty
-        else { return nil }
-
-        return ProxyConfig(
-            scheme: scheme,
-            host: host,
-            port: url.port.flatMap { UInt16(exactly: $0) } ?? scheme.defaultPort,
-            username: url.user(percentEncoded: false),
-            password: url.password(percentEncoded: false)
-        )
+    static func load() -> ProxyConfig? {
+        do {
+            let proxy = try parse(Data(contentsOf: URL.homeDirectory.appending(path: ".openusage/config.json")))
+            if let proxy {
+                AppLog.notice(.config, "proxy on: \(proxy.scheme.rawValue)://\(proxy.host):\(proxy.port)")
+            }
+            return proxy
+        } catch CocoaError.fileReadNoSuchFile {
+            return nil
+        } catch {
+            AppLog.error(.config, "proxy off: \(error.localizedDescription)")
+            return nil
+        }
     }
 
-    /// The Network-framework proxy this config describes, with loopback always excluded.
-    func proxyConfiguration() -> ProxyConfiguration {
+    static func parse(_ data: Data) throws -> ProxyConfig? {
+        guard let file = try? JSONDecoder().decode(File.self, from: data) else { throw ParseError.invalidJSON }
+        guard let proxy = file.proxy, proxy.enabled else { return nil }
+        guard let url = proxy.url.flatMap(URL.init(string:)),
+              let scheme = url.scheme.flatMap({ Scheme(rawValue: $0.lowercased()) }),
+              let host = url.host(), !host.isEmpty,
+              let port = UInt16(exactly: url.port ?? Int(scheme.defaultPort)), port > 0
+        else { throw ParseError.invalidURL }
+        let credential = url.user(percentEncoded: false).map {
+            Credential(username: $0, password: url.password(percentEncoded: false) ?? "")
+        }
+        return ProxyConfig(scheme: scheme, host: host, port: port, credential: credential)
+    }
+
+    var proxyConfiguration: ProxyConfiguration {
         let endpoint = NWEndpoint.hostPort(host: .init(host), port: .init(rawValue: port)!)
-        var configuration: ProxyConfiguration
-        switch scheme {
-        case .socks5:
-            configuration = ProxyConfiguration(socksv5Proxy: endpoint)
-        case .http:
-            configuration = ProxyConfiguration(httpCONNECTProxy: endpoint, tlsOptions: nil)
-        case .https:
-            configuration = ProxyConfiguration(httpCONNECTProxy: endpoint, tlsOptions: NWProtocolTLS.Options())
+        var configuration = switch scheme {
+        case .socks5: ProxyConfiguration(socksv5Proxy: endpoint)
+        case .http: ProxyConfiguration(httpCONNECTProxy: endpoint)
+        case .https: ProxyConfiguration(httpCONNECTProxy: endpoint, tlsOptions: NWProtocolTLS.Options())
         }
-        if let username, let password {
-            configuration.applyCredential(username: username, password: password)
+        if let credential {
+            configuration.applyCredential(username: credential.username, password: credential.password)
         }
-        configuration.excludedDomains = ["localhost", "127.0.0.1", "::1"]
         return configuration
+    }
+
+    private struct File: Decodable {
+        struct Proxy: Decodable {
+            var enabled: Bool
+            var url: String?
+        }
+
+        var proxy: Proxy?
     }
 }
