@@ -7,6 +7,20 @@ import XCTest
 
 @MainActor
 final class AddAccountSheetTests: QuietWindowTestCase {
+    func testKimiOffersItsOwnSignInAndAPIKeyChoices() async throws {
+        let flow = AddAccountFlow(store: AccountStore(defaults: isolatedDefaults(), vault: InMemoryCredentialVault()))
+        flow.choose(.kimi)
+        XCTAssertNil(flow.method)
+        XCTAssertFalse(flow.isWorking)
+        let host = show(AddAccountSheet(flow: flow).background(Color.white), in: .titled,
+                        size: CGSize(width: 300, height: 320)).host
+        try await Task.sleep(for: .milliseconds(300))
+        let text = try readText(in: host)
+        XCTAssertTrue(text.contains("Sign In with Kimi Code"), text)
+        XCTAssertTrue(text.contains("Use API Key"), text)
+        XCTAssertFalse(text.contains("GitHub"), text)
+    }
+
     func testKeyboardSelectionOpensSignInAndEscapeReturnsToTheListThenCloses() async throws {
         let defaults = isolatedDefaults()
         let url = try XCTUnwrap(URL(string: "https://example.com/authorize"))

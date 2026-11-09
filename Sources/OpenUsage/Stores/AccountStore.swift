@@ -82,7 +82,11 @@ final class AccountStore {
 
     @discardableResult
     func add(kind: ProviderKind, label: String, organization: String? = nil, domain: String? = nil, credential: AccountCredential) -> Account {
-        let account = newAccount(kind: kind, label: label, organization: organization, domain: domain)
+        let hasKey = kind.authMethods.contains { if case .apiKey = $0 { true } else { false } }
+        let account = newAccount(
+            kind: kind, label: label, organization: organization, domain: domain,
+            credentialKind: hasKey && kind.authMethods.contains(.oauth) ? credential.kind : nil
+        )
         do {
             try credentialVault.save(credential, for: account.id)
             accounts.append(account)
@@ -239,11 +243,13 @@ final class AccountStore {
     /// A card id keeps only the first 8 hex digits of the account's id, and two cards with one id crash
     /// the dashboard, so an id whose card id is taken is drawn again.
     private func newAccount(
-        kind: ProviderKind, label: String, organization: String? = nil, domain: String? = nil, hub: HubLink? = nil
+        kind: ProviderKind, label: String, organization: String? = nil, domain: String? = nil, hub: HubLink? = nil,
+        credentialKind: AccountCredential.Kind? = nil
     ) -> Account {
         while true {
             let account = Account(
-                id: makeID(), kind: kind, label: Self.name(label, for: kind), organization: organization, domain: domain, hub: hub
+                id: makeID(), kind: kind, label: Self.name(label, for: kind), organization: organization, domain: domain,
+                hub: hub, credentialKind: credentialKind
             )
             if self.account(cardID: account.cardID) == nil { return account }
         }

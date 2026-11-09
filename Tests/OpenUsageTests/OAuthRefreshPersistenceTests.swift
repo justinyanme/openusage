@@ -91,11 +91,12 @@ final class OAuthRefreshPersistenceTests: XCTestCase {
             (.codex, CodexLogin.tokenURL),
             (.cursor, CursorUsageClient.refreshURL),
             (.antigravity, AntigravityLogin.tokenURL),
-            (.grok, GrokLogin.tokenURL)
+            (.grok, GrokLogin.tokenURL),
+            (.kimi, KimiLogin.tokenURL)
         ]
         for (index, (answer, message, failureKind)) in cases.enumerated() {
             for (kind, tokenURL) in renewals {
-                let account = Account(kind: kind, label: "Personal")
+                let account = Account(kind: kind, label: "Personal", credentialKind: .oauth)
                 let vault = InMemoryCredentialVault()
                 let stored = AccountCredential.oauth(
                     OAuthTokens(accessToken: "old-access", refreshToken: "old-refresh", expiresAt: .distantPast)

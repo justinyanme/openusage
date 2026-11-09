@@ -10,6 +10,7 @@ final class ProviderErrorBoundaryTests: XCTestCase {
     private static let keyedKinds: [(ProviderKind, AccountCredential)] = [
         (.copilot, .oauth(OAuthTokens(accessToken: "token"))),
         (.devin, .oauth(OAuthTokens(accessToken: "key"))),
+        (.kimi, .apiKey("key")),
         (.ollama, .apiKey("key")),
         (.opencodeGo, .apiKey("key")),
         (.openrouter, .apiKey("key")),

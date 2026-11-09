@@ -208,6 +208,7 @@ struct CopilotOrganizationLogin: ProviderLogin {
 enum ProviderLoginCatalog {
     static func login(for kind: ProviderKind, method: ProviderAuthMethod, organization: String, domain: GitHubDomain) -> any ProviderLogin {
         if method == .organizationToken { return CopilotOrganizationLogin(organization: organization) }
+        if case .apiKey = method { return APIKeyLogin(kind: kind) }
         return switch kind {
         case .claude: ClaudeLogin()
         case .codex: CodexLogin()
@@ -216,13 +217,14 @@ enum ProviderLoginCatalog {
         case .copilot: CopilotLogin(domain: domain)
         case .devin: DevinLogin()
         case .grok: GrokLogin()
+        case .kimi: KimiLogin()
         case .muse: MuseLogin()
         case .ollama, .opencodeGo, .openrouter, .zai: APIKeyLogin(kind: kind)
         }
     }
 }
 
-private func deviceAuthorization(
+func deviceAuthorization(
     provider: String,
     startURL: URL,
     tokenURL: URL,
@@ -237,6 +239,8 @@ private func deviceAuthorization(
     fields["scope"] = scopes
     let start = try await LoginHTTP.postForm(startURL, fields: fields, using: http, headers: headers)
     let device = try LoginHTTP.decode(DeviceCode.self, from: start)
+    guard !device.userCode.isEmpty, !device.deviceCode.isEmpty, device.expiresIn > 0,
+          device.interval.map({ $0.isFinite && $0 > 0 }) ?? true else { throw LoginError.invalidResponse }
     let candidates = [device.verificationURIComplete, device.verificationURI].compactMap { $0.flatMap(URL.init(string:)) }
     guard let verificationURL = candidates.first(where: { $0.scheme == "https" && $0.host?.isEmpty == false }) else {
         throw LoginError.invalidResponse
@@ -248,7 +252,8 @@ private func deviceAuthorization(
             "device_code": device.deviceCode,
             "grant_type": "urn:ietf:params:oauth:grant-type:device_code"
         ], using: http, headers: headers)
-        if let token = try? JSONDecoder().decode(OAuthTokenResponse.self, from: response.body) {
+        if (200..<300).contains(response.statusCode),
+           let token = try? JSONDecoder().decode(OAuthTokenResponse.self, from: response.body), !token.accessToken.isEmpty {
             return .complete(token)
         }
         return switch ProviderParse.jsonObject(response.body)?["error"] as? String {
@@ -264,7 +269,7 @@ private func deviceAuthorization(
 private struct DeviceCode: Decodable {
     let deviceCode: String
     let userCode: String
-    let verificationURI: String
+    let verificationURI: String?
     let verificationURIComplete: String?
     let expiresIn: Int
     let interval: TimeInterval?

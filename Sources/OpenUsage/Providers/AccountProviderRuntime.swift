@@ -107,7 +107,7 @@ final class AccountProviderRuntime: ProviderRuntime {
                 windowResets: unexpiredZAIResets ?? [],
                 claimWindowReset: { [self] reset, requestID in await claimZAIReset(reset, requestID: requestID) }
             )
-        case .cursor, .antigravity, .copilot, .devin, .grok, .muse, .ollama, .opencodeGo, .openrouter:
+        case .cursor, .antigravity, .copilot, .devin, .grok, .kimi, .muse, .ollama, .opencodeGo, .openrouter:
             return nil
         }
     }
@@ -116,7 +116,7 @@ final class AccountProviderRuntime: ProviderRuntime {
         switch account.kind {
         case .claude: restoreClaude(snapshot)
         case .muse: museLastKnown = snapshot.lines
-        case .codex, .cursor, .antigravity, .copilot, .devin, .grok, .ollama, .opencodeGo, .openrouter, .zai: break
+        case .codex, .cursor, .antigravity, .copilot, .devin, .grok, .kimi, .ollama, .opencodeGo, .openrouter, .zai: break
         }
     }
 
@@ -167,6 +167,7 @@ final class AccountProviderRuntime: ProviderRuntime {
             case .copilot: try await refreshCopilot(credential)
             case .devin: try await refreshDevin(credential)
             case .grok: try await refreshGrok(credential)
+            case .kimi: try await refreshKimi(credential)
             case .muse: try await refreshMuse(credential)
             case .ollama: try await refreshOllama(credential)
             case .opencodeGo: try await refreshOpenCode(credential)

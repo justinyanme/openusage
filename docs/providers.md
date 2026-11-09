@@ -20,6 +20,7 @@ How each provider signs in and what its card shows.
 | Copilot organization | Organization and token | Org Credits, Org Spend |
 | Devin | Browser (Windsurf), then a pasted token | Daily, Weekly, Extra Usage |
 | Grok | Device code (xAI) | Weekly, Extra Usage |
+| Kimi Code | Device code (Kimi), or API key | Session, Weekly when reported, Monthly when reported |
 | Muse Code | Device code (Meta) | Session, Weekly |
 | Ollama | API key | Session, Weekly, Monthly, Extra Usage, Today, Yesterday, Last 30 Days, Requests |
 | OpenCode | API key | Session, Weekly, Monthly |
@@ -41,6 +42,7 @@ did. The token is stored in the app's Keychain.
 | Copilot organization | none; you create the token | A fine-grained personal access token with Organization permissions, Administration, Read-only, from an organization owner or billing manager. |
 | Devin | `openid profile email` | OpenUsage trades the token for the account's API key, the same key Windsurf's editor plugins use. |
 | Grok | `openid email offline_access grok-cli:access` | OpenUsage doesn't ask for `api:access`, which would let the token run Grok models. |
+| Kimi Code | none requested | Uses Kimi Code's public device client and its default grant. OpenUsage reads the profile and quota, and renews the token. |
 | Muse Code | none | Meta's device sign-in takes no scopes. The usage read also returns the account's Model API key, which OpenUsage never reads or stores. |
 
 A narrower grant applies the next time you add an account. To get it for an existing account, remove
@@ -138,6 +140,21 @@ beyond the included pool).
 - Weekly is the shared pool. Extra Usage shows the pay-as-you-go cap and hides when there is no cap
   or a $0 one.
 - A team account has no personal quota. Its card shows the plan and says so.
+
+## Kimi Code
+
+- Choose **Sign In with Kimi Code**, then **Open Browser** and authorize the device. The account uses
+  Kimi's email or nickname. Tokens stay in OpenUsage's Keychain and renew automatically.
+- Or choose **Use API Key** and paste a key from the [Kimi Code Console](https://www.kimi.com/code/console).
+  Both methods read subscription quota at `api.kimi.com`, not Moonshot's prepaid API balance.
+- The card shows the 5-hour Session, Weekly, and Monthly limits in that order, only when reported.
+  New plans may have no Weekly limit. Usage is shared across the account's keys and devices.
+- Monthly is the shared membership quota, including coding. The coding portion is not another limit.
+- The card uses Kimi's percentages and reset times. It does not infer a plan name, a monthly pace,
+  per-model token counts, or dollar spend.
+- A rejected key can be replaced on the account's page; a revoked OAuth grant offers **Sign In Again…**.
+  Existing key accounts keep their key-based controls. If the API reports no subscription quota,
+  the account explains that instead of showing empty limits as unused.
 
 ## Muse Code
 

@@ -83,10 +83,16 @@ private struct MethodChoiceStep: View {
         SheetHeader(
             provider: provider,
             title: "Add \(provider.displayName)",
-            message: "Sign in to your own seat, or add your organization’s billing with a token."
+            message: provider == .copilot
+                ? "Sign in to your own seat, or add your organization’s billing with a token."
+                : "Choose how to sign in to \(provider.displayName)."
         )
         ChoiceList(items: provider.authMethods, selection: $selection, choose: { flow.choose($0) }) { method in
-            Text(method == .organizationToken ? "Organization Billing" : "Sign In with GitHub")
+            switch method {
+            case .oauth: Text("Sign In with \(provider == .copilot ? "GitHub" : provider.displayName)")
+            case .apiKey: Text("Use API Key")
+            case .organizationToken: Text("Organization Billing")
+            }
         }
         CancelRow(cancel: cancel)
     }

@@ -11,7 +11,7 @@ openusage codex@1a2b3c4d   # one account, by its id
 ```
 
 - The argument is an account id (the `providers` key in the output) or a provider kind: `claude`,
-  `codex`, `cursor`, `antigravity`, `copilot`, `devin`, `grok`, `muse`, `ollama`, `opencode`,
+  `codex`, `cursor`, `antigravity`, `copilot`, `devin`, `grok`, `kimi`, `muse`, `ollama`, `opencode`,
   `openrouter`, `zai`. Anything else is an error.
 - `--force` from 0.7.x is accepted and does nothing. The command says so on stderr.
 
@@ -101,6 +101,7 @@ account's right-click menu.
 | Copilot | `premiumCredits`, `extraUsage`, `chat`, `completions`; an organization account: `orgCredits`, `orgSpend` |
 | Devin | `daily`, `weekly`, `extraUsageBalance` |
 | Grok | `weekly` |
+| Kimi Code (`kimi`) | `session`, `weekly`, `monthly`, only when reported |
 | Muse Code | `session`, `weekly` |
 | Ollama | `session`, `weekly`, `monthly`, `purchasedCredits` |
 | OpenCode | `session`, `weekly`, `monthly` |
@@ -109,5 +110,6 @@ account's right-click menu.
 
 - ChatGPT `credits` is `0` when the balance is empty, and absent when ChatGPT reports no balance.
 - Antigravity `argonWeekly` is the Gemini 4 Argon weekly quota, absent when the account has none.
+- Kimi Code's monthly quota has its reported reset time but no `windowSeconds`: the API gives no cycle start.
 - Charts, subtitles, badges, layout, and spend periods (such as OpenRouter's today, week, and month)
   aren't in the output.

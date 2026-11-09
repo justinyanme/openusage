@@ -34,6 +34,7 @@ The app updates itself with signed, notarized [Sparkle](docs/updates.md) updates
 - **[Copilot](docs/providers.md#copilot)**: credits, extra usage, chat, completions, organization billing, GitHub Enterprise on GHE.com
 - **[Devin](docs/providers.md#devin)**: daily and weekly quota, extra usage
 - **[Grok](docs/providers.md#grok)**: weekly limit, extra usage
+- **[Kimi Code](docs/providers.md#kimi-code)**: OAuth or API key; session, weekly when available, shared monthly quota
 - **[Muse Code](docs/providers.md#muse-code)**: session, weekly
 - **[Ollama](docs/providers.md#ollama)**: session, weekly, monthly, extra usage, daily usage and tokens
 - **[OpenCode](docs/providers.md#opencode)**: session, weekly, monthly
@@ -99,6 +100,8 @@ bundle identifier, so it runs beside an installed OpenUsage. See [debugging](doc
 
 To learn the code, read the [architecture overview](docs/architecture.md),
 [adding a provider](docs/adding-a-provider.md), and [AGENTS.md](AGENTS.md).
+The [Kimi Code API research](docs/kimi-api-research.md) records the quota contract and compatibility
+fixtures behind its provider integration.
 
 </details>
 

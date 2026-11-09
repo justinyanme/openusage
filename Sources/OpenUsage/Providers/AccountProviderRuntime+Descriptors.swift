@@ -111,6 +111,15 @@ extension AccountProviderRuntime {
                     .exportingLimit("weekly", unit: "percent"),
                 .badge(key: "payAsYouGo", provider: provider, title: "Extra Usage", metricLabel: "Pay as you go")
             ]
+        case .kimi:
+            [
+                .percent(key: "session", provider: provider, title: "Session")
+                    .exportingLimit("session", unit: "percent"),
+                .percent(key: "weekly", provider: provider, title: "Weekly")
+                    .exportingLimit("weekly", unit: "percent"),
+                .percent(key: "monthly", provider: provider, title: "Monthly")
+                    .exportingLimit("monthly", unit: "percent")
+            ]
         case .muse:
             [
                 .percent(key: "session", provider: provider, title: "Session", sessionStartSignal: .missingResetDate)
